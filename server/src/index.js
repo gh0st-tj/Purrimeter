@@ -341,8 +341,12 @@ async function buildServer() {
   });
 
   app.get('/healthz', async () => {
-    await db.command({ ping: 1 });
     return { ok: true };
+  });
+
+  app.get('/readyz', async () => {
+    await db.command({ ping: 1 });
+    return { ok: true, mongo: true };
   });
 
   app.post('/api/register', {
