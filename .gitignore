@@ -1,0 +1,17 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+node_modules/
+web/node_modules/
+server/node_modules/
+dist/
+build/
+coverage/
+__pycache__/
+*.pyc
+*.zip
+zijQIth4
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

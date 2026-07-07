@@ -1,0 +1,25 @@
+{
+  "name": "purrimeter-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --env-file=.env src/index.js",
+    "hash-admin-password": "node scripts/hash-admin-password.js",
+    "check": "node --check src/index.js"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/cors": "^11.1.0",
+    "@fastify/helmet": "^13.0.2",
+    "@fastify/rate-limit": "^10.3.0",
+    "argon2": "^0.44.0",
+    "fastify": "^5.6.2",
+    "mongodb": "^6.20.0",
+    "socket.io": "^4.8.1"
+  }
+}
