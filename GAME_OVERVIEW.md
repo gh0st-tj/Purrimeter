@@ -41,8 +41,9 @@ inlining the scripts would get them blocked and render a blank page. Edit
   - `generateLevel(seed)` — deterministic procedural generator (pond blobs, rocks, items, quality gate:
     solvable, target ≥ 12, at least one special inside the optimum). Attaches `target` and `solution`.
   - `dayNumber()` — daily index; epoch is `Date.UTC(2026, 6, 1)` = Daily #1. Daily seed = `day * 2654435761 % 2**31`.
-  - `CAMPAIGN` — **35 hand/generator-crafted levels**, each with `walls`, `target`, and a **baked `solution`**
-    (array of cell keys) verified to reproduce the target exactly. Never ship a level whose solution doesn't
+  - `CAMPAIGN` — **31 hand-crafted levels** ordered as a teaching curve (pond → diagonal-safety → rock →
+    yarn → cucumber → tuna → portal, then steadily rising targets 7→43), each with `walls`, `target`, and a
+    **baked `solution`** (array of cell keys) verified to reproduce the target exactly. Never ship a level whose solution doesn't
     replay to its stated target.
   - Share: `shareText()` produces a **spoiler-safe** card (terrain+items emoji grid, NO fences/enclosure)
     plus a checksummed `PURR-<base64>` friend code; `parseFriendCode()` validates (tamper → null).
@@ -67,7 +68,7 @@ inlining the scripts would get them blocked and render a blank page. Edit
 
 - **Tutorial** — auto-launches for new players (`tutorialDone` flag); scripted steps with a glowing target
   tile; only the scripted tile is tappable; replayable from home.
-- **Campaign** — 35 levels on a winding "Campaign Trail" (SVG path, card nodes with icon/state/stars,
+- **Campaign** — 31 levels on a winding "Campaign Trail" (SVG path, card nodes with icon/state/stars,
   progress bar). **Levels lock**: you must clear (≥1 star) level N to open N+1. Order is a deliberate
   difficulty curve: basics → mechanic lessons placed next to the mechanic they teach (Cucumber Shield after
   Cucumber Patch, Box Blocker after Box Magic, Great Wall = plug-pushing lesson) → mixed mid-game → open
