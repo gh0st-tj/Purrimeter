@@ -379,11 +379,13 @@
     const breakdown = scoreBreakdown(S.level, ev).lines;
     S.result = { score: ev.score, stars: starsN, fences: [...S.fences], walls: S.level.walls, breakdown };
     S.submitted = true; S.showOverlay = true; S.review = 'mine';
-    bumpStats(ev.score, starsN, S.mode === 'daily');
-    // personal submission history (for the stats screen)
-    const hist = store.get('history', []);
-    hist.push({ mode: S.mode, day: S.day, score: ev.score, target, stars: starsN, t: Date.now() });
-    store.set('history', hist.slice(-200));
+    // Playtesting your own draft never touches saved stats/history/progress.
+    if (S.mode !== 'playtest') {
+      bumpStats(ev.score, starsN, S.mode === 'daily');
+      const hist = store.get('history', []);
+      hist.push({ mode: S.mode, day: S.day, score: ev.score, target, stars: starsN, t: Date.now() });
+      store.set('history', hist.slice(-200));
+    }
     if (S.mode === 'daily') store.set('daily_' + S.day, S.result);
     if (S.mode === 'archive') {
       // archived dailies keep your best result, never touch the streak
@@ -774,8 +776,10 @@
       </div>` : '';
     return `
       <div class="row" style="margin-bottom:8px">
-        <button class="btn ghost" data-nav="home">← ${step ? 'Skip' : 'Back'}</button>
-        <div class="grow center"><b>${esc(step ? 'Tutorial' : lv.name)}</b>
+        ${S.mode === 'playtest'
+          ? '<button class="btn ghost" id="btn-exit-playtest">← Editor</button>'
+          : `<button class="btn ghost" data-nav="home">← ${step ? 'Skip' : 'Back'}</button>`}
+        <div class="grow center"><b>${S.mode === 'playtest' ? '▶ Playtest' : esc(step ? 'Tutorial' : lv.name)}</b>
           <div class="small soft" id="game-sub">${S.submitted ? `Optimal: ${lv.target} pts` : `${lv.walls - S.fences.size} of ${lv.walls} fences left`}</div></div>
         <span style="width:70px"></span>
       </div>
@@ -800,6 +804,7 @@
     const nextBtn = isCamp && S.levelIndex < CAMPAIGN.length - 1
       ? `<button class="btn primary" id="btn-next">Next level ▶</button>` : '';
     const communityNext = S.mode === 'community' ? '<button class="btn" data-nav="community">🧩 More gardens</button>' : '';
+    const playtestBack = S.mode === 'playtest' ? '<button class="btn primary" id="btn-exit-playtest2">✏️ Back to editor</button>' : '';
     const archBtn = S.mode === 'archive' ? '<button class="btn" data-nav="archive">📚 Archive</button>' : '';
     // community comparison (daily only; live server stats)
     let community = '';
@@ -827,7 +832,7 @@
         ${nextBtn}${keepGoing}
         <button class="btn" id="btn-see-optimal">👀 See optimal</button>
         <button class="btn" id="btn-share">📣 Share</button>
-        ${lbBtn}${retry}${communityNext}${archBtn}
+        ${playtestBack}${lbBtn}${retry}${communityNext}${archBtn}
         <button class="btn ghost" id="btn-close-overlay">✕ Close</button>
       </div>
     </div></div>`;
@@ -865,6 +870,8 @@
     board.addEventListener('mouseleave', () => { if (hint) hint.textContent = ' '; });
     const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
     on('#tut-next', () => { tutAdvance(); render(); });
+    on('#btn-exit-playtest', exitPlaytest);
+    on('#btn-exit-playtest2', exitPlaytest);
     on('#btn-undo', undo);
     on('#btn-submit', submit);
     on('#btn-reset', () => { if (!(S.submitted && S.mode === 'daily')) { resetPlay(); updateBoard(); } });
@@ -1152,9 +1159,11 @@
     return `<div id="editor-board" style="--ts:${ts}px;grid-template-columns:repeat(${e.cols},${ts}px)">${cells}</div>`;
   }
   function renderCommunityCreate() {
-    if (!S.online) return '<div class="card center soft" style="padding:20px">Connect to the server to publish gardens.</div>';
     ensureEditor();
     const e = S.editor;
+    const offlineNote = !S.online
+      ? '<div class="card small soft">⚠️ Offline — you can design and playtest, but you need a connection to publish.</div>'
+      : '';
     const palette = EDITOR_TOOLS.map(([ch, emoji, label]) =>
       `<button class="btn ed-tool ${e.tool === ch ? 'primary' : ''}" data-tool="${ch === '.' ? 'grass' : ch}" title="${label}">${emoji}</button>`).join('');
     const stepper = (dim, label, val) => `
@@ -1177,10 +1186,12 @@
         <input id="cg-name" maxlength="40" placeholder="Mochi's Meadow" value="${esc(e.name || '')}">
         <div class="actions" style="justify-content:flex-start;margin-top:8px">
           <button class="btn" id="ed-check">🔍 Check</button>
-          <button class="btn primary" id="ed-publish" ${e.target ? '' : 'disabled'}>🚀 Publish</button>
+          <button class="btn" id="ed-playtest">▶ Playtest</button>
+          <button class="btn primary" id="ed-publish" ${e.target && S.online ? '' : 'disabled'}>🚀 Publish</button>
           <button class="btn ghost" id="ed-clear">🗑 Clear</button>
         </div>
       </div>
+      ${offlineNote}
       <div class="card small soft">Tap a tool, then tap the grid. Place exactly one cat (not on the border), add ponds/rocks/bonuses, and optionally a portal pair (📦 ×2). The cat escapes if it can reach an edge — build a garden whose best solution is worth at least 8 points.</div>`;
   }
   function applyTool(r, c) {
@@ -1236,6 +1247,27 @@
   function clearEditor() {
     if (!window.confirm('Clear the whole garden and start over?')) return;
     S.editor = null; ensureEditor(); render();
+  }
+  function startPlaytest() {
+    const e = S.editor;
+    const n = $('#cg-name'); if (n) e.name = n.value;
+    const map = e.cells.map(row => row.join(''));
+    const res = validateAiLevel({ name: e.name || 'Playtest', walls: e.walls, map });
+    if (typeof res === 'string') { toast('⚠️ ' + res); return; }
+    // Keep Check/Publish in sync with what the playtest validated.
+    if (res.target >= 8) { e.target = res.target; e.solution = [...res.solution]; e.error = null; }
+    else { e.target = null; e.error = `best solution is only ${res.target} pts — make it worth at least 8`; }
+    S.mode = 'playtest';
+    S.level = res;
+    resetPlay();
+    S.view = 'game';
+    render();
+  }
+  function exitPlaytest() {
+    S.mode = 'community';
+    S.view = 'community';
+    S.communityTab = 'create';
+    render();
   }
   async function fetchCommunity(tab, append = false) {
     if (S.communityLoading) return;
@@ -1333,6 +1365,7 @@
     };
     document.querySelectorAll('[data-eddim]').forEach(b => b.onclick = () => editorStep(b.dataset.eddim, +b.dataset.eddelta));
     const chk = $('#ed-check'); if (chk) chk.onclick = checkEditor;
+    const pt = $('#ed-playtest'); if (pt) pt.onclick = startPlaytest;
     const pubE = $('#ed-publish'); if (pubE) pubE.onclick = publishEditor;
     const clr = $('#ed-clear'); if (clr) clr.onclick = clearEditor;
     document.querySelectorAll('.cg-play').forEach(b => b.onclick = () => { const l = findCommunity(b.dataset.id); if (l) startCommunity(l); });
