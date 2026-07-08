@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      MONGODB_URI: mongodb://localhost:27017/purrimeter_test
+      SESSION_SECRET: ci-session-secret
+      SHARE_SECRET: ci-share-secret
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install server dependencies
+        run: npm ci
+        working-directory: server
+
+      - name: Syntax check
+        run: npm run check
+
+      - name: Verify web/shared engine parity
+        run: npm run verify:core-sync
+
+      - name: Verify campaign solutions replay to targets
+        run: npm run verify:campaign
+
+      - name: Run tests
+        run: npm test

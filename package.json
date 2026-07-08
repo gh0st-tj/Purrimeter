@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "test": "node --test test/*.test.js",
     "check": "node --check shared/core.js && node --check web/core.js && node --check web/ui.js && node --check web/admin.js && node --check server/src/index.js",
     "verify:core-sync": "node -e \"const fs=require('node:fs'); process.exit(fs.readFileSync('shared/core.js','utf8')===fs.readFileSync('web/core.js','utf8')?0:1)\"",
     "verify:campaign": "node -e \"const core=require('./shared/core'); let bad=[]; for (const [i,lv] of core.CAMPAIGN.entries()) { const ev=core.evaluate(lv,new Set(lv.solution||[])); if(ev.escaped||ev.score!==lv.target) bad.push({i,name:lv.name,score:ev.score,target:lv.target,escaped:ev.escaped}); } console.log(JSON.stringify({campaignLevels:core.CAMPAIGN.length,bad},null,2)); process.exit(bad.length?1:0);\""
