@@ -269,8 +269,8 @@
     const lv = S.level, k = key(r, c);
     const step = tutStep();
     if (step) { // tutorial: only the scripted tile is interactive
-      if (step.type !== 'fence') return;
-      if (r !== step.cell[0] || c !== step.cell[1]) return;
+      if (step.type !== 'fence') { nudgeTut(); return; }
+      if (r !== step.cell[0] || c !== step.cell[1]) { nudgeHintTile(); return; }
       S.fences.add(k); S.lastFence = k; tutAdvance(); render();
       return;
     }
@@ -288,6 +288,19 @@
   function nudgeHud() {
     const h = $('#hud'); if (!h) return;
     h.style.animation = 'none'; void h.offsetWidth; h.style.animation = 'shake .35s';
+  }
+  // Tutorial: the player tapped while a "read this first" step is up.
+  function nudgeTut() {
+    const b = $('#tut-banner');
+    if (b) { b.style.animation = 'none'; void b.offsetWidth; b.style.animation = 'tutNudge .45s'; }
+    toast('👆 Read the tip, then tap “Got it”');
+  }
+  // Tutorial: the player tapped a non-target tile during a fence step.
+  function nudgeHintTile() {
+    const t = document.querySelector('#board .tile.hint');
+    if (!t) return;
+    t.classList.remove('tap-wrong'); void t.offsetWidth; t.classList.add('tap-wrong');
+    toast('👆 Tap the glowing tile');
   }
   function undo() {
     const u = S.undo.pop(); if (!u || S.submitted) return;
@@ -690,13 +703,16 @@
       const infoAttr = t.info ? ` data-info="${t.info}" title="${t.info}"` : '';
       tiles += `<div class="${cls}" data-r="${r}" data-c="${c}"${infoAttr} style="${delay}">${t.inner}</div>`;
     }
+    const tutDots = TUT_STEPS.map((_, i) =>
+      `<span class="${i < S.tutStep ? 'done' : i === S.tutStep ? 'on' : ''}"></span>`).join('');
     const tutBanner = step ? `
-      <div class="card tut-banner">
+      <div class="card tut-banner" id="tut-banner">
         <div class="row">
-          <div style="font-size:22px">🎓</div>
-          <div class="grow small"><b>${esc(step.msg)}</b></div>
-          ${step.type === 'info' ? '<button class="btn primary" id="tut-next">Got it</button>' : ''}
+          <div class="tut-icon">🎓</div>
+          <div class="grow tut-msg">${esc(step.msg)}</div>
+          ${step.type === 'info' ? '<button class="btn primary attn" id="tut-next">Got it</button>' : ''}
         </div>
+        <div class="tut-dots">${tutDots}</div>
       </div>` : '';
     const overlay = S.submitted && S.showOverlay ? renderResultOverlay() : '';
     const nextInBar = (S.mode === 'campaign' || S.mode === 'tutorial') && S.levelIndex < CAMPAIGN.length - 1
@@ -728,7 +744,7 @@
       </div>
       ${tutBanner}
       <div id="hud"><div class="pips">${pips}</div>${status}</div>
-      <div id="board-wrap"><div id="board" style="--ts:${ts}px;grid-template-columns:repeat(${lv.cols},${ts}px)">${tiles}</div></div>
+      <div id="board-wrap" class="${step && step.type === 'info' && S.fences.size === 0 ? 'tut-wait' : ''}"><div id="board" style="--ts:${ts}px;grid-template-columns:repeat(${lv.cols},${ts}px)">${tiles}</div></div>
       <div id="tile-hint" class="center"> </div>
       ${optimalView ? '<div class="center small soft" style="margin-bottom:6px">✨ Best-known solution found by the solver</div>' : ''}
       ${playActions}${reviewBar}
