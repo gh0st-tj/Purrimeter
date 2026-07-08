@@ -170,9 +170,23 @@ async function buildServer() {
     },
   });
 
-  const allowedOrigins = new Set([
+  // For each configured origin, also accept its apex<->www counterpart so a
+  // deploy on https://www.example.com and https://example.com both work.
+  const expandWwwVariants = origins => {
+    const out = new Set();
+    for (const o of origins) {
+      out.add(o);
+      const m = /^(https?:\/\/)(?:www\.)?(.+)$/.exec(o);
+      if (m) { out.add(`${m[1]}${m[2]}`); out.add(`${m[1]}www.${m[2]}`); }
+    }
+    return out;
+  };
+
+  const allowedOrigins = expandWwwVariants([
     process.env.SITE_ORIGIN,
     ...(process.env.SITE_ORIGINS || '').split(','),
+    // Production domain default so the app works even if env vars are unset.
+    'https://purrimeter.online',
     'http://localhost:8000',
     'http://127.0.0.1:8000',
     'http://localhost:5173',
