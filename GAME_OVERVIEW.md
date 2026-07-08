@@ -28,7 +28,7 @@ JS as **external files** (`style.css`, `core.js`, `ui.js`, `config.js`). This
 keeps the production CSP strict (`script-src 'self'`, no `'unsafe-inline'`) —
 inlining the scripts would get them blocked and render a blank page. Edit
 `style.css` / `core.js` / `ui.js` directly; there is no build/concat step.
-(The old `head.html`/`mid.html`/`tail.html` parts are deprecated.)
+(The old `head.html`/`mid.html`/`tail.html` build parts have been removed.)
 
 - **`core.js`** — pure logic, no DOM, Node-testable (`module.exports` guard at bottom):
   - `parseLevel(def)` — ASCII map parser.
@@ -46,7 +46,8 @@ inlining the scripts would get them blocked and render a blank page. Edit
     replay to its stated target.
   - Share: `shareText()` produces a **spoiler-safe** card (terrain+items emoji grid, NO fences/enclosure)
     plus a checksummed `PURR-<base64>` friend code; `parseFriendCode()` validates (tamper → null).
-  - `dailyBots(day, target)` — deterministic fake "global" leaderboard entries (demo only).
+  - `dailyBots(day, target)` — legacy deterministic "global" leaderboard entries. **No longer used**: the
+    UI now reads live standings from the server (`GET /api/leaderboard/:day`). Kept only for offline demos.
   - `AI_PROMPT` + `validateAiLevel(obj)` — prompt and validation/repair pipeline for LLM-generated levels.
 - **`ui.js`** — all UI in an IIFE. Central state object `S` {view, mode, level, fences:Set, undo, submitted,
   result, review, day, archiveDay, ...}. Views: `home | game | ranks | ailab | settings | archive`.
@@ -75,19 +76,23 @@ inlining the scripts would get them blocked and render a blank page. Edit
   Wordle-style. Result stored per day; feeds streaks.
 - **Daily Archive** — last 60 dailies listed with dates/results; freely replayable; keeps best score; never
   affects streak. `ARCHIVE_FREE = true` flag exists as a future paywall hook ("Free during the beta" notice).
-- **AI Level Lab** — generates levels via Anthropic or OpenAI **directly from the browser** using a user-
-  supplied API key (Settings: provider, model, key; stored in localStorage). Response is JSON-parsed,
-  validated by `validateAiLevel` (grid legality, cat placement, portal pairing, solver check target ≥ 6);
-  on failure the error is sent back to the LLM once for a fix; final fallback = local `generateLevel`.
+- **AI Level Lab** — production AI generation runs **server-side from the admin area** (`/admin.html`);
+  provider keys live only on the server, never in the browser. The public AI Lab offers a link to admin and
+  a local "Random (no AI)" generator. Server responses are validated by `validateAiLevel` (grid legality,
+  cat placement, portal pairing, solver check target ≥ 6); on failure the error is sent back to the LLM once
+  for a fix; final fallback = local `generateLevel`.
 - **Optimal viewer** — after submit: "See optimal" shows the baked solution as golden fences; review bar
   toggles "View yours (N) / View optimal (M)", plus Results, **Keep improving** (unlocks board, keeps
   fences; hidden when already optimal / daily / tutorial), and **Next level**.
 - **Results screen** — stars pop in, score breakdown ticks line-by-line (meadow tiles / yarn / tuna /
-  cucumber), count-up total, share card, community average (demo bots), Next level.
-- **Leaderboards (Ranks)** — Global tab is **demo bots** (clearly labeled; no server yet). Friends tab is
-  real: paste a friend's `PURR-` code. Community histogram + "Your stats" (submissions, avg % of optimal,
-  optimal solves).
-- **Share** — emoji-grid puzzle picture (never reveals the solution), stars, score, % of optimal, friend code.
+  cucumber), count-up total, share card, live community average, Next level.
+- **Leaderboards (Ranks)** — Global and Friends tabs both read **live server submissions**
+  (`GET /api/leaderboard/:day`), updated in real time over Socket.io. Friends are **mutual**: paste a
+  friend's signed `PURR2-` code to add each other; the Friends tab lists your friends with today's status
+  and a remove button, plus an invite/share flow. Community histogram + "Your stats" (submissions,
+  avg % of optimal, optimal solves).
+- **Share** — emoji-grid puzzle picture (never reveals the solution), stars, score, % of optimal, friend
+  code, and a link back to the site.
 - **Stats** — plays, daily streak, 3-star count, best score; full submission history in storage.
 - **Design** (inspired by an enclose.horse visual review): enclosed area transforms into a **golden hay
   field** (straw striping + 🌾 on ~¾ of tiles, ripple out from the cat at the moment of enclosure), raised
@@ -111,21 +116,30 @@ inlining the scripts would get them blocked and render a blank page. Edit
 
 ## 5. Testing conventions
 
-- No Swift/Xcode or browser screenshots available in the dev sandbox. Verification is:
-  - `node --check` on concatenated JS;
-  - Node unit runs of `core.js` (solver reproduces every campaign target; solutions replay exactly);
-  - **jsdom end-to-end harness**: boot `index.html` with `runScripts:'dangerously'`, simulate `pointerdown`
-    events on tiles, click buttons, assert DOM state. All prior features have such tests — keep the habit.
+- Verification is:
+  - `node --check` on each JS file (`npm run check`);
+  - `npm run verify:core-sync` (web/shared engine parity) and `npm run verify:campaign` (solver reproduces
+    every campaign target; solutions replay exactly);
+  - the automated test suite under `test/` (`npm test`) — engine unit tests plus API integration tests for
+    the daily-submit abuse paths;
+  - GitHub Actions runs all of the above on every push/PR (`.github/workflows/ci.yml`).
 - When adding levels: design map → `solve()` with ≥2 seeds → inspect the printed solution map → verify the
   special mechanics actually participate in the optimum (early designs repeatedly failed this) → bake
   `target` + `solution` into `CAMPAIGN`.
 
-## 6. Known limitations (pre-production state)
+## 6. Status & remaining limitations
 
-- Global leaderboard is fake (deterministic bots), community stats are demo.
-- Anti-cheat is nil: scoring is client-side; localStorage is trivially editable; friend codes are only
-  checksummed, not signed.
-- AI keys are user-provided and live in localStorage; calls go browser→provider (Anthropic requires the
-  `anthropic-dangerous-direct-browser-access` header). Fine for a local prototype, wrong for production.
-- Daily "one submission" is enforced client-side only.
-- No accounts, no sync across devices, no server. See `PRODUCTION_PLAN.md` for the fix.
+Now production-backed (Fastify + MongoDB + Socket.io on Railway; static frontend on Vercel):
+
+- **Live leaderboards** — global + friends read real server submissions; community stats are live.
+- **Server-authoritative daily/archive scoring** — the server re-runs `evaluate()`; the daily "one
+  submission" rule is enforced with a unique index. Friend codes are HMAC-signed (`PURR2-`), so forged
+  codes are rejected. AI keys are server-only.
+
+Still open (see `PRODUCTION_PLAN.md`):
+
+- Campaign & archive progress are still localStorage-only (server has an unused `campaignProgress`
+  collection and a `GET /api/archive` the frontend doesn't call yet) — no cross-device sync for those.
+- Campaign/tutorial scoring remains client-side (only daily/archive are server-scored).
+- Anonymous `register` has no abuse controls (no captcha/fingerprint).
+- No automated daily pre-generation cron (levels are generated lazily on first request).

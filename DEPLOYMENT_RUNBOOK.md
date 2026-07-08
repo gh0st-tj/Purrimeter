@@ -26,7 +26,7 @@ Confirm these two choices:
 
 ## Current repo status
 
-The current folder is not a git repository yet. The web app is under:
+The repo is on GitHub (`origin`). The web app is under:
 
 ```sh
 /Users/tom/Desktop/scripts/Purrimeter/web
@@ -46,7 +46,7 @@ block would be blocked and the page would render blank. Edit `style.css`,
 `core.js`, and `ui.js` directly; `index.html` picks them up automatically.
 
 The `head.html` / `mid.html` / `tail.html` part files and the old
-`cat ... > web/index.html` build step are deprecated and no longer used.
+`cat ... > web/index.html` build step have been removed.
 
 ## Phase 1 - Put the project on GitHub
 
