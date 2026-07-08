@@ -220,4 +220,33 @@ test('community levels: publish validation, likes, and reports', { skip: noDb },
   assert.equal(selfReport.statusCode, 400);
   const report = await app.inject({ method: 'POST', url: `/api/community/levels/${levelId}/report`, headers: other, payload: { reason: 'spam' } });
   assert.equal(report.statusCode, 200);
+
+  // Publish a second garden so we can exercise "mine" and pagination.
+  let seed2 = 0;
+  for (let s = seed + 1; s <= 40 && !seed2; s++) {
+    const lv = core.generateLevel(s, { name: 'x' });
+    if (lv && lv.target >= 12) seed2 = s;
+  }
+  assert.ok(seed2, 'expected a second good seed');
+  const pub2 = await app.inject({
+    method: 'POST', url: '/api/community/levels', headers: author,
+    payload: { seed: seed2, name: 'Second Garden' },
+  });
+  assert.equal(pub2.statusCode, 200);
+
+  // "Mine" scope returns only the author's gardens; another player sees none.
+  const mine = await app.inject({ method: 'GET', url: '/api/community/levels?mine=1', headers: author });
+  assert.equal(mine.statusCode, 200);
+  assert.equal(mine.json().levels.length, 2);
+  assert.ok(mine.json().levels.every(l => l.mine));
+  const otherMine = await app.inject({ method: 'GET', url: '/api/community/levels?scope=mine', headers: other });
+  assert.equal(otherMine.json().levels.length, 0);
+
+  // Pagination: limit=1 yields hasMore, and skip=1 returns a different page.
+  const p0 = await app.inject({ method: 'GET', url: '/api/community/levels?sort=new&limit=1&skip=0', headers: author });
+  const p1 = await app.inject({ method: 'GET', url: '/api/community/levels?sort=new&limit=1&skip=1', headers: author });
+  assert.equal(p0.json().levels.length, 1);
+  assert.equal(p0.json().hasMore, true);
+  assert.equal(p1.json().levels.length, 1);
+  assert.notEqual(p0.json().levels[0].id, p1.json().levels[0].id);
 });

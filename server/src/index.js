@@ -681,18 +681,25 @@ async function buildServer() {
       plays: doc.plays || 0,
       likedByMe: !!likedByMe,
       mine: playerId ? String(doc.authorId) === String(playerId) : false,
+      status: doc.status,
       createdAt: doc.createdAt,
     };
   }
 
   app.get('/api/community/levels', { preHandler: auth }, async request => {
-    const sort = request.query?.sort === 'new'
+    const mine = request.query?.mine === '1' || request.query?.scope === 'mine';
+    const sort = mine || request.query?.sort === 'new'
       ? { createdAt: -1 }
       : { likes: -1, createdAt: -1 };
-    const limit = Math.min(30, Math.max(1, Number.parseInt(request.query?.limit || 20, 10) || 20));
+    // Public lists show only active gardens; "mine" also shows the author's
+    // hidden (under-review) gardens, but never removed ones.
+    const query = mine
+      ? { authorId: request.player._id, status: { $ne: 'removed' } }
+      : { status: 'active' };
+    const limit = Math.min(30, Math.max(1, Number.parseInt(request.query?.limit || 12, 10) || 12));
     const skip = Math.max(0, Number.parseInt(request.query?.skip || 0, 10) || 0);
     const docs = await collections.communityLevels
-      .find({ status: 'active' }).sort(sort).skip(skip).limit(limit + 1).toArray();
+      .find(query).sort(sort).skip(skip).limit(limit + 1).toArray();
     const hasMore = docs.length > limit;
     const page = docs.slice(0, limit);
     const ids = page.map(d => d._id);

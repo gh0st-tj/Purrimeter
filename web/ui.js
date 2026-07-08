@@ -78,8 +78,8 @@
     leaderboard: null, liveStats: null,
     friends: null, friendsLoading: false,
     submitting: false, booting: true,
-    communityTab: 'top',        // top | new | create
-    community: { top: null, new: null },
+    communityTab: 'top',        // top | new | mine | create
+    community: { top: null, new: null, mine: null }, // each: { items, hasMore } | null
     communityLoading: false,
     draft: null,                // { seed, lv, name } generated preview awaiting publish
     animKey: '',           // board entrance animation guard
@@ -1080,6 +1080,7 @@
       <div class="tabs">
         <button class="btn ${tab === 'top' ? 'primary' : ''}" data-ctab="top">🔥 Top</button>
         <button class="btn ${tab === 'new' ? 'primary' : ''}" data-ctab="new">🆕 New</button>
+        <button class="btn ${tab === 'mine' ? 'primary' : ''}" data-ctab="mine">🐾 Mine</button>
         <button class="btn ${tab === 'create' ? 'primary' : ''}" data-ctab="create">✏️ Create</button>
       </div>
       ${body}
@@ -1087,15 +1088,20 @@
   }
   function renderCommunityList(tab) {
     if (!S.online) return '<div class="card center soft" style="padding:20px">Connect to the server to browse community gardens.</div>';
-    const list = S.community[tab];
-    if (!list) return '<div class="card center soft" style="padding:20px">Loading gardens…</div>';
-    if (!list.length) return '<div class="card center soft" style="padding:20px">No gardens yet — be the first! Tap ✏️ Create.</div>';
-    return list.map(l => `
+    const data = S.community[tab];
+    if (!data) return '<div class="card center soft" style="padding:20px">Loading gardens…</div>';
+    if (!data.items.length) {
+      const empty = tab === 'mine'
+        ? "You haven't published any gardens yet. Tap ✏️ Create!"
+        : 'No gardens yet — be the first! Tap ✏️ Create.';
+      return `<div class="card center soft" style="padding:20px">${empty}</div>`;
+    }
+    const cards = data.items.map(l => `
       <div class="card cg-card">
         <pre class="cg-thumb">${esc(levelEmojiGrid(l.def))}</pre>
         <div class="grow">
-          <b>${esc(l.name)}</b>
-          <div class="small soft">by ${esc(l.author)}${l.mine ? ' (you)' : ''} · ${l.rows}×${l.cols} · goal ${l.target} · ▶ ${l.plays}</div>
+          <b>${esc(l.name)}</b>${l.status && l.status !== 'active' ? ' <span class="small soft">(under review)</span>' : ''}
+          <div class="small soft">by ${esc(l.author)}${l.mine ? ' (you)' : ''} · ${l.rows}×${l.cols} · goal ${l.target} · ♥ ${l.likes} · ▶ ${l.plays}</div>
           <div class="actions" style="justify-content:flex-start;margin-top:8px">
             <button class="btn primary cg-play" data-id="${l.id}">▶ Play</button>
             <button class="btn cg-like ${l.likedByMe ? 'toggled' : ''}" data-id="${l.id}" ${l.mine ? 'disabled' : ''}>♥ ${l.likes}</button>
@@ -1103,6 +1109,10 @@
           </div>
         </div>
       </div>`).join('');
+    const more = data.hasMore
+      ? `<div class="actions" style="justify-content:center"><button class="btn" id="cg-more" ${S.communityLoading ? 'disabled' : ''}>${S.communityLoading ? 'Loading…' : 'Load more'}</button></div>`
+      : '';
+    return cards + more;
   }
   function renderCommunityCreate() {
     if (!S.online) return '<div class="card center soft" style="padding:20px">Connect to the server to publish gardens.</div>';
@@ -1128,25 +1138,32 @@
       if (lv && lv.target >= 12) { S.draft = { seed, lv, name: (S.draft && S.draft.name) || '' }; return; }
     }
   }
-  async function fetchCommunity(tab) {
+  async function fetchCommunity(tab, append = false) {
     if (S.communityLoading) return;
     S.communityLoading = true;
+    if (append) render(); // reflect "Loading…" on the button
     try {
       await ensureAuth();
-      const data = await apiFetch(`/api/community/levels?sort=${tab === 'new' ? 'new' : 'top'}`);
-      S.community[tab] = data.levels;
+      const cur = S.community[tab];
+      const skip = append && cur ? cur.items.length : 0;
+      const q = tab === 'mine'
+        ? `mine=1&skip=${skip}`
+        : `sort=${tab === 'new' ? 'new' : 'top'}&skip=${skip}`;
+      const data = await apiFetch(`/api/community/levels?${q}`);
+      const items = append && cur ? cur.items.concat(data.levels) : data.levels;
+      S.community[tab] = { items, hasMore: data.hasMore };
       S.online = true;
-      if (S.view === 'community') render();
     } catch (e) {
       S.online = false;
     } finally {
       S.communityLoading = false;
+      if (S.view === 'community') render();
     }
   }
   function findCommunity(id) {
-    for (const tab of ['top', 'new']) {
-      const l = (S.community[tab] || []).find(x => x.id === id);
-      if (l) return l;
+    for (const tab of ['top', 'new', 'mine']) {
+      const d = S.community[tab];
+      if (d) { const l = d.items.find(x => x.id === id); if (l) return l; }
     }
     return null;
   }
@@ -1170,8 +1187,8 @@
       await apiFetch('/api/community/levels', { method: 'POST', body: JSON.stringify({ seed: S.draft.seed, name }) });
       toast('Published! 🎉');
       S.draft = null;
-      S.community.new = null; S.community.top = null;
-      S.communityTab = 'new';
+      S.community.new = null; S.community.top = null; S.community.mine = null;
+      S.communityTab = 'mine';
       render();
     } catch (e) {
       toast(e.message || 'Could not publish');
@@ -1182,9 +1199,9 @@
     try {
       await ensureAuth();
       const res = await apiFetch(`/api/community/levels/${id}/like`, { method: 'POST', body: '{}' });
-      for (const tab of ['top', 'new']) {
-        const l = (S.community[tab] || []).find(x => x.id === id);
-        if (l) { l.likedByMe = res.liked; l.likes = res.likes; }
+      for (const tab of ['top', 'new', 'mine']) {
+        const d = S.community[tab];
+        if (d) { const l = d.items.find(x => x.id === id); if (l) { l.likedByMe = res.liked; l.likes = res.likes; } }
       }
       render();
     } catch (e) {
@@ -1203,7 +1220,9 @@
   }
   function bindCommunity() {
     document.querySelectorAll('[data-ctab]').forEach(b => b.onclick = () => { S.communityTab = b.dataset.ctab; render(); });
-    if (S.communityTab !== 'create' && S.online && !S.community[S.communityTab]) fetchCommunity(S.communityTab);
+    if (S.communityTab !== 'create' && S.online && !S.community[S.communityTab] && !S.communityLoading) fetchCommunity(S.communityTab);
+    const more = $('#cg-more');
+    if (more) more.onclick = () => fetchCommunity(S.communityTab, true);
     const gen = $('#cg-generate');
     if (gen) gen.onclick = () => { gen.disabled = true; gen.textContent = '🎲 Generating…'; setTimeout(() => { genDraft(); render(); }, 20); };
     const reroll = $('#cg-reroll');
