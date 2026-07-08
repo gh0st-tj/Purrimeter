@@ -23,11 +23,12 @@ most valuable meadow possible.
 
 ## 2. Code layout (web version — the canonical one)
 
-Located in `web/`. The deliverable is a **single self-contained `index.html`**, built by concatenation:
-
-```
-cat head.html style.css mid.html core.js ui.js tail.html > index.html
-```
+Located in `web/`. `index.html` is a small static shell that loads the CSS and
+JS as **external files** (`style.css`, `core.js`, `ui.js`, `config.js`). This
+keeps the production CSP strict (`script-src 'self'`, no `'unsafe-inline'`) —
+inlining the scripts would get them blocked and render a blank page. Edit
+`style.css` / `core.js` / `ui.js` directly; there is no build/concat step.
+(The old `head.html`/`mid.html`/`tail.html` parts are deprecated.)
 
 - **`core.js`** — pure logic, no DOM, Node-testable (`module.exports` guard at bottom):
   - `parseLevel(def)` — ASCII map parser.

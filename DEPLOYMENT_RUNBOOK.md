@@ -38,11 +38,15 @@ The deployable file already exists:
 web/index.html
 ```
 
-It is generated from:
+`web/index.html` is a small static shell that loads the CSS and JS as
+**external files** (`style.css`, `core.js`, `ui.js`, `config.js`). Do NOT
+inline them back into `index.html` by concatenating the parts — the production
+CSP uses `script-src 'self'` (no `'unsafe-inline'`), so an inlined `<script>`
+block would be blocked and the page would render blank. Edit `style.css`,
+`core.js`, and `ui.js` directly; `index.html` picks them up automatically.
 
-```sh
-cat web/head.html web/style.css web/mid.html web/core.js web/ui.js web/tail.html > web/index.html
-```
+The `head.html` / `mid.html` / `tail.html` part files and the old
+`cat ... > web/index.html` build step are deprecated and no longer used.
 
 ## Phase 1 - Put the project on GitHub
 
@@ -163,12 +167,9 @@ Use the exact DNS values Vercel gives you, not guessed values.
 
 Do these before sending the URL to a lot of people:
 
-1. Rebuild `web/index.html` from source:
-
-```sh
-cd /Users/tom/Desktop/scripts/Purrimeter
-cat web/head.html web/style.css web/mid.html web/core.js web/ui.js web/tail.html > web/index.html
-```
+1. `web/index.html` loads `style.css`, `core.js`, and `ui.js` as external
+   files, so there is no build/concatenation step — just make sure your edits
+   to those files are saved.
 
 2. Syntax-check the JavaScript:
 
