@@ -512,6 +512,33 @@ nav button.active { color: #fff; background: var(--accent); box-shadow: 0 8px 18
   text-align: center;
 }
 .boot-cat { font-size: 54px; animation: bob 1.4s ease-in-out infinite; }
+.cg-card { display: flex; gap: 12px; align-items: flex-start; }
+.cg-thumb {
+  margin: 0;
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: pre;
+  padding: 4px;
+  border-radius: 8px;
+  background: #0003;
+}
+.cg-thumb-lg {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 0 auto 6px;
+  font-size: 22px;
+  line-height: 1.05;
+  text-align: center;
+  overflow: auto;
+  padding: 8px;
+  border-radius: var(--radius);
+  background: #0002;
+}
+.cg-card .actions { flex-wrap: wrap; gap: 6px; }
+.cg-like.toggled { background: var(--danger); color: #fff; }
 .tut-icon {
   flex: 0 0 auto;
   width: 38px; height: 38px;

@@ -10,7 +10,7 @@
     return `${location.protocol}//api.${h.replace(/^www\./, '')}`;
   }
   const API_BASE = apiBase();
-  const S = { loggedIn: false, stats: null, levels: [], message: '' };
+  const S = { loggedIn: false, stats: null, levels: [], community: [], communityFilter: 'reported', message: '' };
 
   async function api(path, opts = {}) {
     const res = await fetch(API_BASE + path, {
@@ -30,13 +30,15 @@
 
   async function loadAdmin() {
     try {
-      const [stats, levels] = await Promise.all([
+      const [stats, levels, community] = await Promise.all([
         api('/api/admin/stats'),
         api('/api/admin/levels'),
+        api('/api/admin/community?filter=' + S.communityFilter),
       ]);
       S.loggedIn = true;
       S.stats = stats;
       S.levels = levels.levels || [];
+      S.community = community.levels || [];
     } catch {
       S.loggedIn = false;
     }
@@ -78,6 +80,16 @@
         <input class="publish-day" data-id="${esc(level.id)}" inputmode="numeric" placeholder="day #">
         <button class="btn primary" data-publish="${esc(level.id)}">Publish</button>
       </div>`).join('') : '<div class="center soft" style="padding:20px">No generated drafts yet.</div>';
+    const communityRows = S.community.length ? S.community.map(l => `
+      <div class="lb-row">
+        <div class="grow">
+          <b>${esc(l.name)}</b>${l.status !== 'active' ? ` <span class="small soft">[${esc(l.status)}]</span>` : ''}
+          <div class="small soft">by ${esc(l.author)} · ${esc(l.size)} · goal ${l.target} · ♥ ${l.likes} · ▶ ${l.plays} · 🚩 ${l.reports}</div>
+          ${l.reasons && l.reasons.length ? `<div class="small soft">reasons: ${l.reasons.map(esc).join(' · ')}</div>` : ''}
+        </div>
+        ${l.status !== 'removed' ? `<button class="btn ghost" data-remove="${esc(l.id)}">Remove</button>` : ''}
+        ${l.status !== 'active' ? `<button class="btn primary" data-restore="${esc(l.id)}">Restore</button>` : ''}
+      </div>`).join('') : `<div class="center soft" style="padding:20px">No ${S.communityFilter === 'reported' ? 'reported ' : ''}community gardens.</div>`;
     return `
       <div class="row" style="margin:10px 0">
         <h1 class="grow">Admin</h1>
@@ -87,8 +99,8 @@
       <div class="stats">
         <div class="stat"><b>${stats.players ?? '—'}</b><span>players</span></div>
         <div class="stat"><b>${stats.submissions ?? '—'}</b><span>submissions</span></div>
-        <div class="stat"><b>${stats.aiDrafts ?? '—'}</b><span>drafts</span></div>
-        <div class="stat"><b>${stats.published ?? '—'}</b><span>dailies</span></div>
+        <div class="stat"><b>${stats.community ?? '—'}</b><span>community</span></div>
+        <div class="stat"><b>${stats.reported ?? '—'}</b><span>reported</span></div>
       </div>
       <div class="card">
         <h3>Generate level</h3>
@@ -114,6 +126,14 @@
       <div class="card">
         <h3>Drafts</h3>
         ${levelRows}
+      </div>
+      <div class="card">
+        <div class="row" style="margin-bottom:8px">
+          <h3 class="grow">Community moderation</h3>
+          <button class="btn ${S.communityFilter === 'reported' ? 'primary' : ''}" data-cfilter="reported">Reported</button>
+          <button class="btn ${S.communityFilter === 'all' ? 'primary' : ''}" data-cfilter="all">All</button>
+        </div>
+        ${communityRows}
       </div>
       ${S.message ? `<div class="card small soft">${esc(S.message)}</div>` : ''}`;
   }
@@ -186,6 +206,22 @@
         }
       };
     });
+    document.querySelectorAll('[data-cfilter]').forEach(btn => {
+      btn.onclick = async () => { S.communityFilter = btn.dataset.cfilter; await loadAdmin(); };
+    });
+    const moderate = (attr, path, ok) => document.querySelectorAll(`[data-${attr}]`).forEach(btn => {
+      btn.onclick = async () => {
+        try {
+          await api('/api/admin/community/' + encodeURIComponent(btn.dataset[attr]) + '/' + path, { method: 'POST', body: '{}' });
+          toast(ok);
+          await loadAdmin();
+        } catch (e) {
+          toast(e.message);
+        }
+      };
+    });
+    moderate('remove', 'remove', 'Removed.');
+    moderate('restore', 'restore', 'Restored.');
   }
 
   loadAdmin();

@@ -64,8 +64,8 @@
 
   // ---------- game state ----------
   const S = {
-    view: 'home',          // home | game | ranks | ailab | settings
-    mode: 'campaign',      // campaign | daily | ai
+    view: 'home',          // home | game | ranks | community | settings | archive
+    mode: 'campaign',      // campaign | daily | archive | community | tutorial
     level: null, levelIndex: 0,
     fences: new Set(), undo: [],
     roam: false, submitted: false, result: null,
@@ -78,6 +78,10 @@
     leaderboard: null, liveStats: null,
     friends: null, friendsLoading: false,
     submitting: false, booting: true,
+    communityTab: 'top',        // top | new | create
+    community: { top: null, new: null },
+    communityLoading: false,
+    draft: null,                // { seed, lv, name } generated preview awaiting publish
     animKey: '',           // board entrance animation guard
     lastFence: null,       // only the newest fence pops
   };
@@ -226,9 +230,6 @@
     const r = dailyResult();
     if (r) { S.submitted = true; S.result = r; S.fences = new Set(r.fences); S.showOverlay = true; }
     S.view = 'game'; render();
-  }
-  function startAi(lv) {
-    S.mode = 'ai'; S.level = lv; resetPlay(); S.view = 'game'; render();
   }
   const dailySeed = day => day * 2654435761 % 2 ** 31;
   async function startArchive(day) {
@@ -462,12 +463,12 @@
 
   // ---------- rendering ----------
   function render() {
-    const views = { home: renderHome, game: renderGame, ranks: renderRanks, ailab: renderAiLab, settings: renderSettings, archive: renderArchive };
+    const views = { home: renderHome, game: renderGame, ranks: renderRanks, community: renderCommunity, settings: renderSettings, archive: renderArchive };
     app().innerHTML = views[S.view]();
     bindNav();
     if (S.view === 'home') { const t = $('#btn-tutorial'); if (t) t.onclick = startTutorial; }
     if (S.view === 'game') { bindBoard(); animateOverlay(); primeBoard(); }
-    if (S.view === 'ailab') bindAiLab();
+    if (S.view === 'community') bindCommunity();
     if (S.view === 'settings') bindSettings();
     if (S.view === 'ranks') bindRanks();
     updateConnPill();
@@ -485,7 +486,7 @@
 
   function navBar() {
     if (S.view === 'game') return ''; // immersive play — no tab bar
-    let items = [['ranks', '🏆', 'Ranks'], ['ailab', '🤖', 'AI Lab'], ['settings', '⚙️', 'Settings']];
+    let items = [['ranks', '🏆', 'Ranks'], ['community', '🧩', 'Community'], ['settings', '⚙️', 'Settings']];
     if (S.view !== 'home') items = [['home', '🏡', 'Home'], ...items];
     return '<nav>' + items.map(([v, ico, label]) =>
       `<button data-nav="${v}" class="${S.view === v ? 'active' : ''}"><span class="ico">${ico}</span>${label}</button>`).join('') + '</nav>';
@@ -798,7 +799,7 @@
     const isCamp = S.mode === 'campaign' || S.mode === 'tutorial';
     const nextBtn = isCamp && S.levelIndex < CAMPAIGN.length - 1
       ? `<button class="btn primary" id="btn-next">Next level ▶</button>` : '';
-    const aiNext = S.mode === 'ai' ? '<button class="btn" data-nav="ailab">✨ New AI level</button>' : '';
+    const communityNext = S.mode === 'community' ? '<button class="btn" data-nav="community">🧩 More gardens</button>' : '';
     const archBtn = S.mode === 'archive' ? '<button class="btn" data-nav="archive">📚 Archive</button>' : '';
     // community comparison (daily only; live server stats)
     let community = '';
@@ -826,7 +827,7 @@
         ${nextBtn}${keepGoing}
         <button class="btn" id="btn-see-optimal">👀 See optimal</button>
         <button class="btn" id="btn-share">📣 Share</button>
-        ${lbBtn}${retry}${aiNext}${archBtn}
+        ${lbBtn}${retry}${communityNext}${archBtn}
         <button class="btn ghost" id="btn-close-overlay">✕ Close</button>
       </div>
     </div></div>`;
@@ -1068,28 +1069,154 @@
     });
   }
 
-  // --- AI lab ---
-  function renderAiLab() {
+  // --- community levels ---
+  const COMMUNITY_CAP = 30;
+  function renderCommunity() {
+    const tab = S.communityTab;
+    const body = tab === 'create' ? renderCommunityCreate() : renderCommunityList(tab);
     return `
-      <h1 style="margin:10px 0">🤖 AI Level Lab</h1>
-      <div class="card">
-        <h3>Owner generation is protected</h3>
-        <div class="small soft">Production AI generation now runs server-side from the admin area. Provider keys never live in the browser.</div>
-        <div class="actions" style="justify-content:flex-start">
-          <a class="btn primary" href="admin.html">Admin</a>
-          <button class="btn" id="btn-gen-local">🎲 Random (no AI)</button>
-        </div>
-        <div id="gen-status" class="small soft" style="margin-top:8px"></div>
+      <h1 style="margin:10px 0">🧩 Community Gardens</h1>
+      <div class="small soft" style="margin-bottom:8px">Player-made gardens — generate one, publish it, and see which get the most love. 🐾</div>
+      <div class="tabs">
+        <button class="btn ${tab === 'top' ? 'primary' : ''}" data-ctab="top">🔥 Top</button>
+        <button class="btn ${tab === 'new' ? 'primary' : ''}" data-ctab="new">🆕 New</button>
+        <button class="btn ${tab === 'create' ? 'primary' : ''}" data-ctab="create">✏️ Create</button>
       </div>
+      ${body}
       ${navBar()}`;
   }
-  function bindAiLab() {
-    const status = msg => { const el = $('#gen-status'); if (el) el.textContent = msg; };
-    $('#btn-gen-local').onclick = () => {
-      status('Generating locally…');
-      const lv = generateLevel((Date.now() ^ Math.floor(Math.random() * 1e9)) % 2 ** 31, { name: 'Random Garden' });
-      startAi(lv);
+  function renderCommunityList(tab) {
+    if (!S.online) return '<div class="card center soft" style="padding:20px">Connect to the server to browse community gardens.</div>';
+    const list = S.community[tab];
+    if (!list) return '<div class="card center soft" style="padding:20px">Loading gardens…</div>';
+    if (!list.length) return '<div class="card center soft" style="padding:20px">No gardens yet — be the first! Tap ✏️ Create.</div>';
+    return list.map(l => `
+      <div class="card cg-card">
+        <pre class="cg-thumb">${esc(levelEmojiGrid(l.def))}</pre>
+        <div class="grow">
+          <b>${esc(l.name)}</b>
+          <div class="small soft">by ${esc(l.author)}${l.mine ? ' (you)' : ''} · ${l.rows}×${l.cols} · goal ${l.target} · ▶ ${l.plays}</div>
+          <div class="actions" style="justify-content:flex-start;margin-top:8px">
+            <button class="btn primary cg-play" data-id="${l.id}">▶ Play</button>
+            <button class="btn cg-like ${l.likedByMe ? 'toggled' : ''}" data-id="${l.id}" ${l.mine ? 'disabled' : ''}>♥ ${l.likes}</button>
+            ${l.mine ? '' : `<button class="btn ghost cg-report" data-id="${l.id}" title="Report" aria-label="Report ${esc(l.name)}">🚩</button>`}
+          </div>
+        </div>
+      </div>`).join('');
+  }
+  function renderCommunityCreate() {
+    if (!S.online) return '<div class="card center soft" style="padding:20px">Connect to the server to publish gardens.</div>';
+    const d = S.draft;
+    const inner = d ? `
+      <pre class="cg-thumb cg-thumb-lg">${esc(levelEmojiGrid(d.lv))}</pre>
+      <div class="small soft center">${d.lv.rows}×${d.lv.cols} garden · goal ${d.lv.target} pts · ${d.lv.walls} fences</div>
+      <label style="margin-top:10px">Name your garden</label>
+      <input id="cg-name" maxlength="40" placeholder="Mochi's Meadow" value="${esc(d.name || '')}">
+      <div class="actions" style="justify-content:flex-start;margin-top:8px">
+        <button class="btn primary" id="cg-publish">🚀 Publish</button>
+        <button class="btn" id="cg-reroll">🎲 Re-roll</button>
+      </div>` : `
+      <div class="center soft" style="padding:6px 0 12px">Generate a random garden, re-roll until you like it, then name and publish it.</div>
+      <div class="actions" style="justify-content:center"><button class="btn primary" id="cg-generate">🎲 Generate a garden</button></div>`;
+    return `<div class="card">${inner}</div>
+      <div class="card small soft">Gardens are procedurally generated, so they're always solvable and fair. You can publish up to ${COMMUNITY_CAP}. Keep names friendly — reports go to the moderators.</div>`;
+  }
+  function genDraft() {
+    for (let i = 0; i < 8; i++) {
+      const seed = Math.floor(Math.random() * 2 ** 31);
+      const lv = generateLevel(seed, { name: 'Community Garden' });
+      if (lv && lv.target >= 12) { S.draft = { seed, lv, name: (S.draft && S.draft.name) || '' }; return; }
+    }
+  }
+  async function fetchCommunity(tab) {
+    if (S.communityLoading) return;
+    S.communityLoading = true;
+    try {
+      await ensureAuth();
+      const data = await apiFetch(`/api/community/levels?sort=${tab === 'new' ? 'new' : 'top'}`);
+      S.community[tab] = data.levels;
+      S.online = true;
+      if (S.view === 'community') render();
+    } catch (e) {
+      S.online = false;
+    } finally {
+      S.communityLoading = false;
+    }
+  }
+  function findCommunity(id) {
+    for (const tab of ['top', 'new']) {
+      const l = (S.community[tab] || []).find(x => x.id === id);
+      if (l) return l;
+    }
+    return null;
+  }
+  function startCommunity(l) {
+    const lv = parseLevel(l.def);
+    lv.name = l.name;
+    lv.target = l.target;
+    S.mode = 'community'; S.level = lv; resetPlay(); S.view = 'game'; render();
+    apiFetch(`/api/community/levels/${l.id}/play`, { method: 'POST', body: '{}' }).catch(() => {});
+  }
+  async function publishDraft() {
+    if (!S.draft) return;
+    const nameEl = $('#cg-name');
+    const name = (nameEl ? nameEl.value : '').trim();
+    if (name.length < 3) { toast('Give your garden a name (3+ characters)'); return; }
+    S.draft.name = name;
+    const btn = $('#cg-publish');
+    if (btn) { btn.disabled = true; btn.textContent = '🚀 Publishing…'; }
+    try {
+      await ensureAuth();
+      await apiFetch('/api/community/levels', { method: 'POST', body: JSON.stringify({ seed: S.draft.seed, name }) });
+      toast('Published! 🎉');
+      S.draft = null;
+      S.community.new = null; S.community.top = null;
+      S.communityTab = 'new';
+      render();
+    } catch (e) {
+      toast(e.message || 'Could not publish');
+      if (btn) { btn.disabled = false; btn.textContent = '🚀 Publish'; }
+    }
+  }
+  async function likeCommunity(id) {
+    try {
+      await ensureAuth();
+      const res = await apiFetch(`/api/community/levels/${id}/like`, { method: 'POST', body: '{}' });
+      for (const tab of ['top', 'new']) {
+        const l = (S.community[tab] || []).find(x => x.id === id);
+        if (l) { l.likedByMe = res.liked; l.likes = res.likes; }
+      }
+      render();
+    } catch (e) {
+      toast(e.message || 'Could not like');
+    }
+  }
+  async function reportCommunity(id) {
+    if (!window.confirm('Report this garden as inappropriate? Moderators will review it.')) return;
+    try {
+      await ensureAuth();
+      await apiFetch(`/api/community/levels/${id}/report`, { method: 'POST', body: JSON.stringify({ reason: 'inappropriate' }) });
+      toast('Reported — thanks for keeping the garden friendly.');
+    } catch (e) {
+      toast(e.message || 'Could not report');
+    }
+  }
+  function bindCommunity() {
+    document.querySelectorAll('[data-ctab]').forEach(b => b.onclick = () => { S.communityTab = b.dataset.ctab; render(); });
+    if (S.communityTab !== 'create' && S.online && !S.community[S.communityTab]) fetchCommunity(S.communityTab);
+    const gen = $('#cg-generate');
+    if (gen) gen.onclick = () => { gen.disabled = true; gen.textContent = '🎲 Generating…'; setTimeout(() => { genDraft(); render(); }, 20); };
+    const reroll = $('#cg-reroll');
+    if (reroll) reroll.onclick = () => {
+      const n = $('#cg-name'); if (n && S.draft) S.draft.name = n.value;
+      reroll.disabled = true; reroll.textContent = '🎲 …';
+      setTimeout(() => { genDraft(); render(); }, 20);
     };
+    const pub = $('#cg-publish');
+    if (pub) pub.onclick = publishDraft;
+    document.querySelectorAll('.cg-play').forEach(b => b.onclick = () => { const l = findCommunity(b.dataset.id); if (l) startCommunity(l); });
+    document.querySelectorAll('.cg-like').forEach(b => b.onclick = () => likeCommunity(b.dataset.id));
+    document.querySelectorAll('.cg-report').forEach(b => b.onclick = () => reportCommunity(b.dataset.id));
   }
 
   // --- settings ---

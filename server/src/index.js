@@ -23,6 +23,12 @@ const {
 const DAY_MS = 86400000;
 const TOKEN_BYTES = 32;
 const ADMIN_COOKIE = 'purr_admin';
+const MAX_SEED = 2 ** 31;
+const MAX_COMMUNITY_PER_AUTHOR = 30;
+const REPORT_HIDE_THRESHOLD = 5;
+// Best-effort blocklist for community level names (seed-based maps can't carry
+// arbitrary content, so names are the only free-text surface to moderate).
+const PROFANITY = ['fuck', 'shit', 'bitch', 'cunt', 'nigger', 'faggot', 'rape', 'nazi', 'retard'];
 
 function requiredEnv(name) {
   const value = process.env[name];
@@ -50,6 +56,39 @@ function validateName(name) {
   const n = normalizeName(name);
   if (!/^[A-Za-z0-9 _-]{3,14}$/.test(n)) return null;
   return n;
+}
+
+function containsProfanity(str) {
+  const flat = String(str).toLowerCase().replace(/[^a-z]/g, '');
+  return PROFANITY.some(word => flat.includes(word));
+}
+
+function validateLevelName(name) {
+  const n = normalizeName(name);
+  if (!/^[A-Za-z0-9 !?'.,:_-]{3,40}$/.test(n)) return null;
+  if (containsProfanity(n)) return null;
+  return n;
+}
+
+// Rebuild a community level deterministically from its seed. Because the map is
+// generated (never user-supplied), it is guaranteed to be legal and solvable;
+// we only reject seeds whose garden isn't good enough (target too low).
+function buildCommunityLevel(seed, name) {
+  if (!Number.isInteger(seed) || seed < 0 || seed >= MAX_SEED) {
+    const err = new Error('invalid seed'); err.statusCode = 400; throw err;
+  }
+  const lv = generateLevel(seed, { name });
+  if (!lv || !lv.target || lv.target < 12) {
+    const err = new Error('that seed did not make a good garden — re-roll and try again');
+    err.statusCode = 422; throw err;
+  }
+  return {
+    def: publicLevelDef(lv),
+    target: lv.target,
+    solution: lv.solution || [],
+    rows: lv.rows,
+    cols: lv.cols,
+  };
 }
 
 function publicLevelDef(lvOrDoc) {
@@ -216,6 +255,9 @@ async function buildServer() {
     campaignProgress: db.collection('campaignProgress'),
     aiLevels: db.collection('aiLevels'),
     adminAudit: db.collection('adminAudit'),
+    communityLevels: db.collection('communityLevels'),
+    communityVotes: db.collection('communityVotes'),
+    communityReports: db.collection('communityReports'),
   };
 
   app.decorate('mongoClient', client);
@@ -232,6 +274,12 @@ async function buildServer() {
     await collections.campaignProgress.createIndex({ playerId: 1, levelName: 1 }, { unique: true });
     await collections.aiLevels.createIndex({ status: 1, createdAt: -1 });
     await collections.adminAudit.createIndex({ createdAt: -1 });
+    await collections.communityLevels.createIndex({ status: 1, likes: -1, createdAt: -1 });
+    await collections.communityLevels.createIndex({ status: 1, createdAt: -1 });
+    await collections.communityLevels.createIndex({ status: 1, reports: -1 });
+    await collections.communityLevels.createIndex({ authorId: 1, seed: 1 }, { unique: true });
+    await collections.communityVotes.createIndex({ levelId: 1, playerId: 1 }, { unique: true });
+    await collections.communityReports.createIndex({ levelId: 1, playerId: 1 }, { unique: true });
   }
   await ensureIndexes();
 
@@ -618,6 +666,145 @@ async function buildServer() {
     return { day: doc.day, scope, ...board, stats };
   });
 
+  // ---------- community levels ----------
+  function communityRow(doc, likedByMe, playerId) {
+    return {
+      id: String(doc._id),
+      name: doc.name,
+      author: doc.authorName || 'Anonymous',
+      def: doc.def,
+      walls: doc.def.walls,
+      target: doc.target,
+      rows: doc.rows,
+      cols: doc.cols,
+      likes: doc.likes || 0,
+      plays: doc.plays || 0,
+      likedByMe: !!likedByMe,
+      mine: playerId ? String(doc.authorId) === String(playerId) : false,
+      createdAt: doc.createdAt,
+    };
+  }
+
+  app.get('/api/community/levels', { preHandler: auth }, async request => {
+    const sort = request.query?.sort === 'new'
+      ? { createdAt: -1 }
+      : { likes: -1, createdAt: -1 };
+    const limit = Math.min(30, Math.max(1, Number.parseInt(request.query?.limit || 20, 10) || 20));
+    const skip = Math.max(0, Number.parseInt(request.query?.skip || 0, 10) || 0);
+    const docs = await collections.communityLevels
+      .find({ status: 'active' }).sort(sort).skip(skip).limit(limit + 1).toArray();
+    const hasMore = docs.length > limit;
+    const page = docs.slice(0, limit);
+    const ids = page.map(d => d._id);
+    const myVotes = ids.length
+      ? await collections.communityVotes.find({ levelId: { $in: ids }, playerId: request.player._id }).toArray()
+      : [];
+    const liked = new Set(myVotes.map(v => String(v.levelId)));
+    return {
+      levels: page.map(d => communityRow(d, liked.has(String(d._id)), request.player._id)),
+      hasMore,
+    };
+  });
+
+  app.post('/api/community/levels', {
+    preHandler: auth,
+    config: { rateLimit: { max: 10, timeWindow: '1 hour' } },
+  }, async (request, reply) => {
+    const name = validateLevelName(request.body?.name);
+    if (!name) return reply.code(400).send({ error: 'name must be 3-40 clean characters' });
+    const seed = Number.parseInt(request.body?.seed, 10);
+    const built = buildCommunityLevel(seed, name); // throws 400/422 on bad seed/garden
+
+    const owned = await collections.communityLevels.countDocuments({ authorId: request.player._id, status: { $ne: 'removed' } });
+    if (owned >= MAX_COMMUNITY_PER_AUTHOR) {
+      return reply.code(400).send({ error: `you can publish up to ${MAX_COMMUNITY_PER_AUTHOR} gardens` });
+    }
+
+    const doc = {
+      seed,
+      name,
+      def: built.def,
+      target: built.target,
+      solution: built.solution,
+      rows: built.rows,
+      cols: built.cols,
+      authorId: request.player._id,
+      authorName: request.player.name || 'Anonymous',
+      status: 'active',
+      likes: 0,
+      reports: 0,
+      plays: 0,
+      createdAt: new Date(),
+    };
+    try {
+      const res = await collections.communityLevels.insertOne(doc);
+      doc._id = res.insertedId;
+    } catch (error) {
+      if (error.code === 11000) return reply.code(409).send({ error: 'you already published this garden' });
+      throw error;
+    }
+    return { ok: true, level: communityRow(doc, false, request.player._id) };
+  });
+
+  app.post('/api/community/levels/:id/like', { preHandler: auth }, async (request, reply) => {
+    if (!ObjectId.isValid(request.params.id)) return reply.code(400).send({ error: 'invalid level id' });
+    const levelId = new ObjectId(request.params.id);
+    const level = await collections.communityLevels.findOne({ _id: levelId, status: 'active' });
+    if (!level) return reply.code(404).send({ error: 'level not found' });
+    if (String(level.authorId) === String(request.player._id)) {
+      return reply.code(400).send({ error: 'you cannot like your own garden' });
+    }
+    let liked;
+    try {
+      await collections.communityVotes.insertOne({ levelId, playerId: request.player._id, createdAt: new Date() });
+      await collections.communityLevels.updateOne({ _id: levelId }, { $inc: { likes: 1 } });
+      liked = true;
+    } catch (error) {
+      if (error.code !== 11000) throw error;
+      await collections.communityVotes.deleteOne({ levelId, playerId: request.player._id });
+      await collections.communityLevels.updateOne({ _id: levelId }, { $inc: { likes: -1 } });
+      liked = false;
+    }
+    const fresh = await collections.communityLevels.findOne({ _id: levelId }, { projection: { likes: 1 } });
+    return { ok: true, liked, likes: Math.max(0, fresh?.likes || 0) };
+  });
+
+  app.post('/api/community/levels/:id/report', { preHandler: auth }, async (request, reply) => {
+    if (!ObjectId.isValid(request.params.id)) return reply.code(400).send({ error: 'invalid level id' });
+    const levelId = new ObjectId(request.params.id);
+    const level = await collections.communityLevels.findOne({ _id: levelId });
+    if (!level || level.status === 'removed') return reply.code(404).send({ error: 'level not found' });
+    if (String(level.authorId) === String(request.player._id)) {
+      return reply.code(400).send({ error: 'you cannot report your own garden' });
+    }
+    const reason = String(request.body?.reason || 'inappropriate').slice(0, 200);
+    try {
+      await collections.communityReports.insertOne({ levelId, playerId: request.player._id, reason, createdAt: new Date() });
+    } catch (error) {
+      if (error.code === 11000) return { ok: true }; // already reported by this player
+      throw error;
+    }
+    const updated = await collections.communityLevels.findOneAndUpdate(
+      { _id: levelId },
+      { $inc: { reports: 1 } },
+      { returnDocument: 'after' },
+    );
+    const doc = updated.value || updated;
+    if (doc && doc.status === 'active' && (doc.reports || 0) >= REPORT_HIDE_THRESHOLD) {
+      await collections.communityLevels.updateOne({ _id: levelId }, { $set: { status: 'hidden' } });
+    }
+    return { ok: true };
+  });
+
+  app.post('/api/community/levels/:id/play', { preHandler: auth }, async (request, reply) => {
+    if (!ObjectId.isValid(request.params.id)) return reply.code(400).send({ error: 'invalid level id' });
+    await collections.communityLevels.updateOne(
+      { _id: new ObjectId(request.params.id), status: 'active' },
+      { $inc: { plays: 1 } },
+    );
+    return { ok: true };
+  });
+
   app.post('/api/admin/login', {
     config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
   }, async (request, reply) => {
@@ -642,13 +829,63 @@ async function buildServer() {
   });
 
   app.get('/api/admin/stats', { preHandler: adminAuth }, async () => {
-    const [players, submissions, aiDrafts, published] = await Promise.all([
+    const [players, submissions, aiDrafts, published, community, reported] = await Promise.all([
       collections.players.countDocuments(),
       collections.submissions.countDocuments(),
       collections.aiLevels.countDocuments({ status: 'draft' }),
       collections.dailyLevels.countDocuments(),
+      collections.communityLevels.countDocuments({ status: { $ne: 'removed' } }),
+      collections.communityLevels.countDocuments({ status: 'active', reports: { $gt: 0 } }),
     ]);
-    return { players, submissions, aiDrafts, published };
+    return { players, submissions, aiDrafts, published, community, reported };
+  });
+
+  app.get('/api/admin/community', { preHandler: adminAuth }, async request => {
+    const filter = request.query?.filter === 'all' ? {} : { reports: { $gt: 0 } };
+    const docs = await collections.communityLevels
+      .find(filter).sort({ reports: -1, createdAt: -1 }).limit(100).toArray();
+    const levels = [];
+    for (const d of docs) {
+      const reasons = d.reports
+        ? (await collections.communityReports.find({ levelId: d._id }).sort({ createdAt: -1 }).limit(5).toArray()).map(r => r.reason)
+        : [];
+      levels.push({
+        id: String(d._id),
+        name: d.name,
+        author: d.authorName || 'Anonymous',
+        seed: d.seed,
+        target: d.target,
+        size: `${d.rows}×${d.cols}`,
+        status: d.status,
+        likes: d.likes || 0,
+        plays: d.plays || 0,
+        reports: d.reports || 0,
+        reasons,
+        createdAt: d.createdAt,
+      });
+    }
+    return { levels };
+  });
+
+  app.post('/api/admin/community/:id/remove', { preHandler: adminAuth }, async (request, reply) => {
+    if (!ObjectId.isValid(request.params.id)) return reply.code(400).send({ error: 'invalid level id' });
+    const id = new ObjectId(request.params.id);
+    const res = await collections.communityLevels.updateOne({ _id: id }, { $set: { status: 'removed' } });
+    if (!res.matchedCount) return reply.code(404).send({ error: 'level not found' });
+    await audit('remove_community_level', { id: request.params.id });
+    return { ok: true };
+  });
+
+  app.post('/api/admin/community/:id/restore', { preHandler: adminAuth }, async (request, reply) => {
+    if (!ObjectId.isValid(request.params.id)) return reply.code(400).send({ error: 'invalid level id' });
+    const id = new ObjectId(request.params.id);
+    const res = await collections.communityLevels.updateOne(
+      { _id: id }, { $set: { status: 'active', reports: 0 } },
+    );
+    if (!res.matchedCount) return reply.code(404).send({ error: 'level not found' });
+    await collections.communityReports.deleteMany({ levelId: id });
+    await audit('restore_community_level', { id: request.params.id });
+    return { ok: true };
   });
 
   async function callProvider(provider, prompt) {
