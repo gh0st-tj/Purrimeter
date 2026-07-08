@@ -144,3 +144,80 @@ test('friendships are mutual and removable', { skip: noDb }, async (t) => {
   assert.equal(aAfter.json().friends.length, 0);
   assert.equal(bAfter.json().friends.length, 0);
 });
+
+test('community levels: publish validation, likes, and reports', { skip: noDb }, async (t) => {
+  process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'ci-session-secret';
+  process.env.SHARE_SECRET = process.env.SHARE_SECRET || 'ci-share-secret';
+  const core = require('../shared/core');
+
+  // Find a seed that generates a good garden (target >= 12).
+  let seed = 0;
+  for (let s = 1; s <= 20 && !seed; s++) {
+    const lv = core.generateLevel(s, { name: 'x' });
+    if (lv && lv.target >= 12) seed = s;
+  }
+  assert.ok(seed, 'expected at least one good seed in 1..20');
+
+  const app = await server.buildServer();
+  t.after(() => app.close());
+
+  const register = async () => {
+    const reg = await app.inject({ method: 'POST', url: '/api/register', payload: {} });
+    return { authorization: 'Bearer ' + reg.json().token };
+  };
+  const author = await register();
+  const other = await register();
+
+  // Invalid name (profanity) → 400.
+  const bad = await app.inject({
+    method: 'POST', url: '/api/community/levels', headers: author,
+    payload: { seed, name: 'shitty garden' },
+  });
+  assert.equal(bad.statusCode, 400);
+
+  // Invalid seed → 400.
+  const badSeed = await app.inject({
+    method: 'POST', url: '/api/community/levels', headers: author,
+    payload: { seed: -5, name: 'Nice Garden' },
+  });
+  assert.equal(badSeed.statusCode, 400);
+
+  // Valid publish → 200.
+  const pub = await app.inject({
+    method: 'POST', url: '/api/community/levels', headers: author,
+    payload: { seed, name: 'Mochi Meadow' },
+  });
+  assert.equal(pub.statusCode, 200);
+  const levelId = pub.json().level.id;
+
+  // Duplicate publish (same author + seed) → 409.
+  const dup = await app.inject({
+    method: 'POST', url: '/api/community/levels', headers: author,
+    payload: { seed, name: 'Mochi Meadow Again' },
+  });
+  assert.equal(dup.statusCode, 409);
+
+  // Listing shows it; author sees mine=true.
+  const list = await app.inject({ method: 'GET', url: '/api/community/levels?sort=new', headers: author });
+  assert.equal(list.statusCode, 200);
+  const mineRow = list.json().levels.find(l => l.id === levelId);
+  assert.ok(mineRow && mineRow.mine);
+
+  // Author cannot like own garden.
+  const selfLike = await app.inject({ method: 'POST', url: `/api/community/levels/${levelId}/like`, headers: author, payload: {} });
+  assert.equal(selfLike.statusCode, 400);
+
+  // Another player likes, then unlikes (toggle).
+  const like1 = await app.inject({ method: 'POST', url: `/api/community/levels/${levelId}/like`, headers: other, payload: {} });
+  assert.equal(like1.json().liked, true);
+  assert.equal(like1.json().likes, 1);
+  const like2 = await app.inject({ method: 'POST', url: `/api/community/levels/${levelId}/like`, headers: other, payload: {} });
+  assert.equal(like2.json().liked, false);
+  assert.equal(like2.json().likes, 0);
+
+  // Author cannot report own garden; another player can.
+  const selfReport = await app.inject({ method: 'POST', url: `/api/community/levels/${levelId}/report`, headers: author, payload: { reason: 'x' } });
+  assert.equal(selfReport.statusCode, 400);
+  const report = await app.inject({ method: 'POST', url: `/api/community/levels/${levelId}/report`, headers: other, payload: { reason: 'spam' } });
+  assert.equal(report.statusCode, 200);
+});

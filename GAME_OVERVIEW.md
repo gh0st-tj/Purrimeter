@@ -76,11 +76,20 @@ inlining the scripts would get them blocked and render a blank page. Edit
   Wordle-style. Result stored per day; feeds streaks.
 - **Daily Archive** — last 60 dailies listed with dates/results; freely replayable; keeps best score; never
   affects streak. `ARCHIVE_FREE = true` flag exists as a future paywall hook ("Free during the beta" notice).
-- **AI Level Lab** — production AI generation runs **server-side from the admin area** (`/admin.html`);
-  provider keys live only on the server, never in the browser. The public AI Lab offers a link to admin and
-  a local "Random (no AI)" generator. Server responses are validated by `validateAiLevel` (grid legality,
-  cat placement, portal pairing, solver check target ≥ 6); on failure the error is sent back to the LLM once
-  for a fix; final fallback = local `generateLevel`.
+- **Community Gardens (Community tab)** — player-made levels. Because arbitrary maps are a moderation/abuse
+  risk, community levels are **seed-based**: the player generates a random garden client-side
+  (`generateLevel(seed)`), re-rolls until happy, names it, and publishes only `{seed, name}`. The server
+  regenerates deterministically from the seed, so every published garden is guaranteed legal, solvable, and
+  fair — the only free-text surface is the name (validated + profanity-filtered). Browse **Top**/**New**,
+  **like** (one per player, self-likes blocked), **report** (one per player; auto-hides after
+  `REPORT_HIDE_THRESHOLD` pending admin review), and **Create**. Limits: per-author cap
+  (`MAX_COMMUNITY_PER_AUTHOR`), publish rate-limit, and dedupe on `(authorId, seed)`.
+- **AI Level Lab (admin only)** — AI generation runs **server-side from the admin area** (`/admin.html`);
+  provider keys live only on the server, never in the browser. There is no public AI Lab tab. Server
+  responses are validated by `validateAiLevel` (grid legality, cat placement, portal pairing, solver check
+  target ≥ 6); on failure the error is sent back to the LLM once for a fix; final fallback = `generateLevel`.
+- **Admin moderation** — the admin page lists community levels (Reported / All), with report reasons, and
+  can **remove** or **restore** any level.
 - **Optimal viewer** — after submit: "See optimal" shows the baked solution as golden fences; review bar
   toggles "View yours (N) / View optimal (M)", plus Results, **Keep improving** (unlocks board, keeps
   fences; hidden when already optimal / daily / tutorial), and **Next level**.
