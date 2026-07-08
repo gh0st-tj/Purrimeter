@@ -539,6 +539,29 @@ nav button.active { color: #fff; background: var(--accent); box-shadow: 0 8px 18
 }
 .cg-card .actions { flex-wrap: wrap; gap: 6px; }
 .cg-like.toggled { background: var(--danger); color: #fff; }
+/* community level editor */
+.ed-palette { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.ed-palette .btn { font-size: 18px; padding: 8px 11px; }
+.ed-wrap { display: flex; justify-content: center; margin: 12px 0; }
+#editor-board {
+  position: relative;
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, #2b3b2430, #ffffff2a);
+  touch-action: none;
+  user-select: none;
+  width: max-content;
+}
+.ed-cell { cursor: pointer; }
+.ed-cell:hover { filter: brightness(1.08); }
+.ed-controls { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; }
+.ed-stepper { display: flex; align-items: center; gap: 8px; }
+.ed-stepper .btn { padding: 4px 11px; }
+.ed-stepper b { min-width: 20px; text-align: center; }
+.ed-status-ok { color: var(--good); font-weight: 700; }
+.ed-status-err { color: var(--danger); font-weight: 700; }
 .tut-icon {
   flex: 0 0 auto;
   width: 38px; height: 38px;

@@ -76,14 +76,15 @@ inlining the scripts would get them blocked and render a blank page. Edit
   Wordle-style. Result stored per day; feeds streaks.
 - **Daily Archive** — last 60 dailies listed with dates/results; freely replayable; keeps best score; never
   affects streak. `ARCHIVE_FREE = true` flag exists as a future paywall hook ("Free during the beta" notice).
-- **Community Gardens (Community tab)** — player-made levels. Because arbitrary maps are a moderation/abuse
-  risk, community levels are **seed-based**: the player generates a random garden client-side
-  (`generateLevel(seed)`), re-rolls until happy, names it, and publishes only `{seed, name}`. The server
-  regenerates deterministically from the seed, so every published garden is guaranteed legal, solvable, and
-  fair — the only free-text surface is the name (validated + profanity-filtered). Browse **Top**/**New**,
-  **like** (one per player, self-likes blocked), **report** (one per player; auto-hides after
-  `REPORT_HIDE_THRESHOLD` pending admin review), and **Create**. Limits: per-author cap
-  (`MAX_COMMUNITY_PER_AUTHOR`), publish rate-limit, and dedupe on `(authorId, seed)`.
+- **Community Gardens (Community tab)** — player-made levels built in a **tile editor**: the player places
+  the cat, ponds, rocks, bonuses (yarn/tuna/cucumber) and portal pairs, sets grid size (6–12) and the fence
+  budget, taps **Check** (client runs `validateAiLevel` to compute the goal), then publishes
+  `{name, def:{walls, map}}`. The server re-validates authoritatively with `validateAiLevel` (legal grid,
+  exactly one cat off the border, portal pairing, size/wall bounds, solver-computed target) and requires
+  `target ≥ COMMUNITY_MIN_TARGET`. Maps carry no free text; the name is validated + profanity-filtered.
+  Browse **Top**/**New**/**Mine** with **Load more** pagination; **like** (one per player, self-likes
+  blocked), **report** (one per player; auto-hides after `REPORT_HIDE_THRESHOLD` pending admin review).
+  Limits: per-author cap (`MAX_COMMUNITY_PER_AUTHOR`), publish rate-limit, and dedupe on `(authorId, mapHash)`.
 - **AI Level Lab (admin only)** — AI generation runs **server-side from the admin area** (`/admin.html`);
   provider keys live only on the server, never in the browser. There is no public AI Lab tab. Server
   responses are validated by `validateAiLevel` (grid legality, cat placement, portal pairing, solver check

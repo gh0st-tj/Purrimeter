@@ -23,9 +23,9 @@ const {
 const DAY_MS = 86400000;
 const TOKEN_BYTES = 32;
 const ADMIN_COOKIE = 'purr_admin';
-const MAX_SEED = 2 ** 31;
 const MAX_COMMUNITY_PER_AUTHOR = 30;
 const REPORT_HIDE_THRESHOLD = 5;
+const COMMUNITY_MIN_TARGET = 8;
 // Best-effort blocklist for community level names (seed-based maps can't carry
 // arbitrary content, so names are the only free-text surface to moderate).
 const PROFANITY = ['fuck', 'shit', 'bitch', 'cunt', 'nigger', 'faggot', 'rape', 'nazi', 'retard'];
@@ -70,24 +70,34 @@ function validateLevelName(name) {
   return n;
 }
 
-// Rebuild a community level deterministically from its seed. Because the map is
-// generated (never user-supplied), it is guaranteed to be legal and solvable;
-// we only reject seeds whose garden isn't good enough (target too low).
-function buildCommunityLevel(seed, name) {
-  if (!Number.isInteger(seed) || seed < 0 || seed >= MAX_SEED) {
-    const err = new Error('invalid seed'); err.statusCode = 400; throw err;
+function mapHash(map) {
+  return crypto.createHash('sha256').update(map.join('\n')).digest('hex');
+}
+
+// Validate a player-authored garden (from the level editor). validateAiLevel
+// enforces grid legality, exactly one cat off the border, portal pairing, size
+// and wall bounds, and runs the solver to compute the target/solution. We then
+// require a minimum target so published gardens are real puzzles.
+function buildCommunityLevel(name, walls, map) {
+  if (!Array.isArray(map) || !map.length) {
+    const err = new Error('the garden is empty'); err.statusCode = 400; throw err;
   }
-  const lv = generateLevel(seed, { name });
-  if (!lv || !lv.target || lv.target < 12) {
-    const err = new Error('that seed did not make a good garden — re-roll and try again');
+  const wallCount = Number.parseInt(walls, 10);
+  const res = validateAiLevel({ name, walls: wallCount, map });
+  if (typeof res === 'string') {
+    const err = new Error(res); err.statusCode = 400; throw err;
+  }
+  if (res.target < COMMUNITY_MIN_TARGET) {
+    const err = new Error(`the best solution is only worth ${res.target} — make a garden worth at least ${COMMUNITY_MIN_TARGET} points`);
     err.statusCode = 422; throw err;
   }
   return {
-    def: publicLevelDef(lv),
-    target: lv.target,
-    solution: lv.solution || [],
-    rows: lv.rows,
-    cols: lv.cols,
+    def: publicLevelDef(res),
+    target: res.target,
+    solution: res.solution || [],
+    rows: res.rows,
+    cols: res.cols,
+    mapHash: mapHash(res.map),
   };
 }
 
@@ -277,7 +287,10 @@ async function buildServer() {
     await collections.communityLevels.createIndex({ status: 1, likes: -1, createdAt: -1 });
     await collections.communityLevels.createIndex({ status: 1, createdAt: -1 });
     await collections.communityLevels.createIndex({ status: 1, reports: -1 });
-    await collections.communityLevels.createIndex({ authorId: 1, seed: 1 }, { unique: true });
+    // Older builds used a (authorId, seed) unique index; community levels are
+    // now editor-authored and deduped by map hash instead.
+    try { await collections.communityLevels.dropIndex('authorId_1_seed_1'); } catch (e) { /* not present */ }
+    await collections.communityLevels.createIndex({ authorId: 1, mapHash: 1 }, { unique: true });
     await collections.communityVotes.createIndex({ levelId: 1, playerId: 1 }, { unique: true });
     await collections.communityReports.createIndex({ levelId: 1, playerId: 1 }, { unique: true });
   }
@@ -719,8 +732,13 @@ async function buildServer() {
   }, async (request, reply) => {
     const name = validateLevelName(request.body?.name);
     if (!name) return reply.code(400).send({ error: 'name must be 3-40 clean characters' });
-    const seed = Number.parseInt(request.body?.seed, 10);
-    const built = buildCommunityLevel(seed, name); // throws 400/422 on bad seed/garden
+    const def = request.body?.def || request.body || {};
+    let built;
+    try {
+      built = buildCommunityLevel(name, def.walls, def.map);
+    } catch (error) {
+      return reply.code(error.statusCode || 400).send({ error: error.message });
+    }
 
     const owned = await collections.communityLevels.countDocuments({ authorId: request.player._id, status: { $ne: 'removed' } });
     if (owned >= MAX_COMMUNITY_PER_AUTHOR) {
@@ -728,13 +746,13 @@ async function buildServer() {
     }
 
     const doc = {
-      seed,
       name,
       def: built.def,
       target: built.target,
       solution: built.solution,
       rows: built.rows,
       cols: built.cols,
+      mapHash: built.mapHash,
       authorId: request.player._id,
       authorName: request.player.name || 'Anonymous',
       status: 'active',

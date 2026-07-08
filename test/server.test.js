@@ -150,13 +150,16 @@ test('community levels: publish validation, likes, and reports', { skip: noDb },
   process.env.SHARE_SECRET = process.env.SHARE_SECRET || 'ci-share-secret';
   const core = require('../shared/core');
 
-  // Find a seed that generates a good garden (target >= 12).
-  let seed = 0;
-  for (let s = 1; s <= 20 && !seed; s++) {
-    const lv = core.generateLevel(s, { name: 'x' });
-    if (lv && lv.target >= 12) seed = s;
+  // Build two valid editor maps from the generator (guaranteed legal & solvable).
+  const defOf = s => { const lv = core.generateLevel(s, { name: 'x' }); return lv && { walls: lv.walls, map: lv.map }; };
+  let defA = null, defB = null;
+  for (let s = 1; s <= 40 && !(defA && defB); s++) {
+    const d = defOf(s);
+    if (d && d.map.join('') !== (defA && defA.map.join(''))) {
+      if (!defA) defA = d; else if (d.map.join('') !== defA.map.join('')) defB = d;
+    }
   }
-  assert.ok(seed, 'expected at least one good seed in 1..20');
+  assert.ok(defA && defB, 'expected two distinct valid maps');
 
   const app = await server.buildServer();
   t.after(() => app.close());
@@ -171,29 +174,29 @@ test('community levels: publish validation, likes, and reports', { skip: noDb },
   // Invalid name (profanity) → 400.
   const bad = await app.inject({
     method: 'POST', url: '/api/community/levels', headers: author,
-    payload: { seed, name: 'shitty garden' },
+    payload: { name: 'shitty garden', def: defA },
   });
   assert.equal(bad.statusCode, 400);
 
-  // Invalid seed → 400.
-  const badSeed = await app.inject({
+  // Invalid map (no cat) → 400.
+  const badMap = await app.inject({
     method: 'POST', url: '/api/community/levels', headers: author,
-    payload: { seed: -5, name: 'Nice Garden' },
+    payload: { name: 'No Cat Garden', def: { walls: 6, map: ['......', '......', '......', '......', '......', '......'] } },
   });
-  assert.equal(badSeed.statusCode, 400);
+  assert.equal(badMap.statusCode, 400);
 
   // Valid publish → 200.
   const pub = await app.inject({
     method: 'POST', url: '/api/community/levels', headers: author,
-    payload: { seed, name: 'Mochi Meadow' },
+    payload: { name: 'Mochi Meadow', def: defA },
   });
   assert.equal(pub.statusCode, 200);
   const levelId = pub.json().level.id;
 
-  // Duplicate publish (same author + seed) → 409.
+  // Duplicate publish (same author + identical map) → 409.
   const dup = await app.inject({
     method: 'POST', url: '/api/community/levels', headers: author,
-    payload: { seed, name: 'Mochi Meadow Again' },
+    payload: { name: 'Mochi Meadow Again', def: defA },
   });
   assert.equal(dup.statusCode, 409);
 
@@ -221,16 +224,10 @@ test('community levels: publish validation, likes, and reports', { skip: noDb },
   const report = await app.inject({ method: 'POST', url: `/api/community/levels/${levelId}/report`, headers: other, payload: { reason: 'spam' } });
   assert.equal(report.statusCode, 200);
 
-  // Publish a second garden so we can exercise "mine" and pagination.
-  let seed2 = 0;
-  for (let s = seed + 1; s <= 40 && !seed2; s++) {
-    const lv = core.generateLevel(s, { name: 'x' });
-    if (lv && lv.target >= 12) seed2 = s;
-  }
-  assert.ok(seed2, 'expected a second good seed');
+  // Publish a second (distinct) garden so we can exercise "mine" and pagination.
   const pub2 = await app.inject({
     method: 'POST', url: '/api/community/levels', headers: author,
-    payload: { seed: seed2, name: 'Second Garden' },
+    payload: { name: 'Second Garden', def: defB },
   });
   assert.equal(pub2.statusCode, 200);
 

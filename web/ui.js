@@ -81,7 +81,7 @@
     communityTab: 'top',        // top | new | mine | create
     community: { top: null, new: null, mine: null }, // each: { items, hasMore } | null
     communityLoading: false,
-    draft: null,                // { seed, lv, name } generated preview awaiting publish
+    editor: null,               // level editor state (see ensureEditor)
     animKey: '',           // board entrance animation guard
     lastFence: null,       // only the newest fence pops
   };
@@ -1070,7 +1070,6 @@
   }
 
   // --- community levels ---
-  const COMMUNITY_CAP = 30;
   function renderCommunity() {
     const tab = S.communityTab;
     const body = tab === 'create' ? renderCommunityCreate() : renderCommunityList(tab);
@@ -1114,29 +1113,129 @@
       : '';
     return cards + more;
   }
+  // ---- level editor ----
+  const EDITOR_TOOLS = [
+    ['C', '🐈', 'Cat'],
+    ['~', '🌊', 'Pond'],
+    ['#', '🪨', 'Rock'],
+    ['y', '🧶', 'Yarn +3'],
+    ['t', '🐟', 'Tuna +10'],
+    ['u', '🥒', 'Cucumber −5'],
+    ['1', '📦', 'Portal ×2'],
+    ['.', '🌱', 'Erase'],
+  ];
+  function ensureEditor() {
+    if (S.editor) return;
+    const rows = 9, cols = 9;
+    const cells = Array.from({ length: rows }, () => Array(cols).fill('.'));
+    cells[rows >> 1][cols >> 1] = 'C';
+    S.editor = { rows, cols, cells, tool: '~', walls: 8, name: '', target: null, solution: null, error: null };
+  }
+  function editorTile(ch, r, c) {
+    let cls = 'tile ed-cell';
+    if (ch === '~') cls += ' water';
+    else if (ch === '#') cls += ' rock';
+    else cls += (r + c) % 2 ? ' grass-b' : ' grass-a';
+    let inner = '';
+    if (ch === 'C') inner = '<span class="tile-cat">🐈</span>';
+    else if (ch === 'y') inner = '<span class="item">🧶</span>';
+    else if (ch === 't') inner = '<span class="item">🐟</span>';
+    else if (ch === 'u') inner = '<span class="item">🥒</span>';
+    else if (ch >= '1' && ch <= '3') inner = '<span class="item">📦</span>';
+    return `<div class="${cls}" data-er="${r}" data-ec="${c}">${inner}</div>`;
+  }
+  function editorBoardHTML() {
+    const e = S.editor;
+    const ts = Math.min(40, Math.max(20, Math.floor((Math.min(window.innerWidth, 560) - 56) / e.cols)));
+    let cells = '';
+    for (let r = 0; r < e.rows; r++) for (let c = 0; c < e.cols; c++) cells += editorTile(e.cells[r][c], r, c);
+    return `<div id="editor-board" style="--ts:${ts}px;grid-template-columns:repeat(${e.cols},${ts}px)">${cells}</div>`;
+  }
   function renderCommunityCreate() {
     if (!S.online) return '<div class="card center soft" style="padding:20px">Connect to the server to publish gardens.</div>';
-    const d = S.draft;
-    const inner = d ? `
-      <pre class="cg-thumb cg-thumb-lg">${esc(levelEmojiGrid(d.lv))}</pre>
-      <div class="small soft center">${d.lv.rows}×${d.lv.cols} garden · goal ${d.lv.target} pts · ${d.lv.walls} fences</div>
-      <label style="margin-top:10px">Name your garden</label>
-      <input id="cg-name" maxlength="40" placeholder="Mochi's Meadow" value="${esc(d.name || '')}">
-      <div class="actions" style="justify-content:flex-start;margin-top:8px">
-        <button class="btn primary" id="cg-publish">🚀 Publish</button>
-        <button class="btn" id="cg-reroll">🎲 Re-roll</button>
-      </div>` : `
-      <div class="center soft" style="padding:6px 0 12px">Generate a random garden, re-roll until you like it, then name and publish it.</div>
-      <div class="actions" style="justify-content:center"><button class="btn primary" id="cg-generate">🎲 Generate a garden</button></div>`;
-    return `<div class="card">${inner}</div>
-      <div class="card small soft">Gardens are procedurally generated, so they're always solvable and fair. You can publish up to ${COMMUNITY_CAP}. Keep names friendly — reports go to the moderators.</div>`;
+    ensureEditor();
+    const e = S.editor;
+    const palette = EDITOR_TOOLS.map(([ch, emoji, label]) =>
+      `<button class="btn ed-tool ${e.tool === ch ? 'primary' : ''}" data-tool="${ch === '.' ? 'grass' : ch}" title="${label}">${emoji}</button>`).join('');
+    const stepper = (dim, label, val) => `
+      <div class="ed-stepper"><span class="small soft">${label}</span>
+        <button class="btn ghost" data-eddim="${dim}" data-eddelta="-1">−</button>
+        <b>${val}</b>
+        <button class="btn ghost" data-eddim="${dim}" data-eddelta="1">+</button></div>`;
+    const status = e.error
+      ? `<div class="small ed-status-err">⚠️ ${esc(e.error)}</div>`
+      : e.target
+        ? `<div class="small ed-status-ok">✓ Looks great! Best solution = <b>${e.target}</b> pts. Name it and publish.</div>`
+        : '<div class="small soft">Place the cat and terrain, then tap <b>Check</b> to compute the goal.</div>';
+    return `
+      <div class="card">
+        <div class="ed-palette">${palette}</div>
+        <div id="editor-wrap" class="ed-wrap">${editorBoardHTML()}</div>
+        <div class="ed-controls">${stepper('rows', 'Rows', e.rows)}${stepper('cols', 'Cols', e.cols)}${stepper('walls', 'Fences', e.walls)}</div>
+        <div id="ed-status" style="margin-top:8px">${status}</div>
+        <label style="margin-top:10px">Name your garden</label>
+        <input id="cg-name" maxlength="40" placeholder="Mochi's Meadow" value="${esc(e.name || '')}">
+        <div class="actions" style="justify-content:flex-start;margin-top:8px">
+          <button class="btn" id="ed-check">🔍 Check</button>
+          <button class="btn primary" id="ed-publish" ${e.target ? '' : 'disabled'}>🚀 Publish</button>
+          <button class="btn ghost" id="ed-clear">🗑 Clear</button>
+        </div>
+      </div>
+      <div class="card small soft">Tap a tool, then tap the grid. Place exactly one cat (not on the border), add ponds/rocks/bonuses, and optionally a portal pair (📦 ×2). The cat escapes if it can reach an edge — build a garden whose best solution is worth at least 8 points.</div>`;
   }
-  function genDraft() {
-    for (let i = 0; i < 8; i++) {
-      const seed = Math.floor(Math.random() * 2 ** 31);
-      const lv = generateLevel(seed, { name: 'Community Garden' });
-      if (lv && lv.target >= 12) { S.draft = { seed, lv, name: (S.draft && S.draft.name) || '' }; return; }
+  function applyTool(r, c) {
+    const e = S.editor;
+    const ch = e.tool;
+    if (ch === 'C') {
+      for (let i = 0; i < e.rows; i++) for (let j = 0; j < e.cols; j++) if (e.cells[i][j] === 'C') e.cells[i][j] = '.';
+      e.cells[r][c] = 'C';
+    } else if (e.cells[r][c] === ch) {
+      e.cells[r][c] = '.'; // tap again to erase
+    } else {
+      e.cells[r][c] = ch;
     }
+    e.target = null; e.solution = null; e.error = null;
+    const wrap = $('#editor-wrap'); if (wrap) wrap.innerHTML = editorBoardHTML();
+    const pub = $('#ed-publish'); if (pub) pub.disabled = true;
+    const st = $('#ed-status'); if (st) st.innerHTML = '<div class="small soft">Place the cat and terrain, then tap <b>Check</b> to compute the goal.</div>';
+  }
+  function editorStep(dim, delta) {
+    const e = S.editor;
+    const n = $('#cg-name'); if (n) e.name = n.value;
+    if (dim === 'walls') {
+      e.walls = Math.max(4, Math.min(14, e.walls + delta));
+    } else {
+      const next = Math.max(6, Math.min(12, e[dim] + delta));
+      if (next === e[dim]) return;
+      const rows = dim === 'rows' ? next : e.rows;
+      const cols = dim === 'cols' ? next : e.cols;
+      e.cells = Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) =>
+        (e.cells[r] && e.cells[r][c]) || '.'));
+      e.rows = rows; e.cols = cols;
+    }
+    e.target = null; e.solution = null; e.error = null;
+    render();
+  }
+  function checkEditor() {
+    const e = S.editor;
+    const n = $('#cg-name'); if (n) e.name = n.value;
+    const btn = $('#ed-check'); if (btn) { btn.disabled = true; btn.textContent = '🔍 Checking…'; }
+    setTimeout(() => {
+      const map = e.cells.map(row => row.join(''));
+      const res = validateAiLevel({ name: e.name || 'My Garden', walls: e.walls, map });
+      if (typeof res === 'string') {
+        e.error = res; e.target = null; e.solution = null;
+      } else if (res.target < 8) {
+        e.error = `best solution is only ${res.target} pts — make it worth at least 8`; e.target = null; e.solution = null;
+      } else {
+        e.error = null; e.target = res.target; e.solution = [...res.solution];
+      }
+      render();
+    }, 20);
+  }
+  function clearEditor() {
+    if (!window.confirm('Clear the whole garden and start over?')) return;
+    S.editor = null; ensureEditor(); render();
   }
   async function fetchCommunity(tab, append = false) {
     if (S.communityLoading) return;
@@ -1174,24 +1273,25 @@
     S.mode = 'community'; S.level = lv; resetPlay(); S.view = 'game'; render();
     apiFetch(`/api/community/levels/${l.id}/play`, { method: 'POST', body: '{}' }).catch(() => {});
   }
-  async function publishDraft() {
-    if (!S.draft) return;
-    const nameEl = $('#cg-name');
-    const name = (nameEl ? nameEl.value : '').trim();
+  async function publishEditor() {
+    const e = S.editor; if (!e) return;
+    const n = $('#cg-name'); if (n) e.name = n.value;
+    const name = (e.name || '').trim();
     if (name.length < 3) { toast('Give your garden a name (3+ characters)'); return; }
-    S.draft.name = name;
-    const btn = $('#cg-publish');
+    if (!e.target) { toast('Tap 🔍 Check first to validate your garden'); return; }
+    const btn = $('#ed-publish');
     if (btn) { btn.disabled = true; btn.textContent = '🚀 Publishing…'; }
     try {
       await ensureAuth();
-      await apiFetch('/api/community/levels', { method: 'POST', body: JSON.stringify({ seed: S.draft.seed, name }) });
+      const map = e.cells.map(row => row.join(''));
+      await apiFetch('/api/community/levels', { method: 'POST', body: JSON.stringify({ name, def: { walls: e.walls, map } }) });
       toast('Published! 🎉');
-      S.draft = null;
+      S.editor = null;
       S.community.new = null; S.community.top = null; S.community.mine = null;
       S.communityTab = 'mine';
       render();
-    } catch (e) {
-      toast(e.message || 'Could not publish');
+    } catch (err) {
+      toast(err.message || 'Could not publish');
       if (btn) { btn.disabled = false; btn.textContent = '🚀 Publish'; }
     }
   }
@@ -1223,16 +1323,18 @@
     if (S.communityTab !== 'create' && S.online && !S.community[S.communityTab] && !S.communityLoading) fetchCommunity(S.communityTab);
     const more = $('#cg-more');
     if (more) more.onclick = () => fetchCommunity(S.communityTab, true);
-    const gen = $('#cg-generate');
-    if (gen) gen.onclick = () => { gen.disabled = true; gen.textContent = '🎲 Generating…'; setTimeout(() => { genDraft(); render(); }, 20); };
-    const reroll = $('#cg-reroll');
-    if (reroll) reroll.onclick = () => {
-      const n = $('#cg-name'); if (n && S.draft) S.draft.name = n.value;
-      reroll.disabled = true; reroll.textContent = '🎲 …';
-      setTimeout(() => { genDraft(); render(); }, 20);
+    document.querySelectorAll('.ed-tool').forEach(b => b.onclick = () => {
+      S.editor.tool = b.dataset.tool === 'grass' ? '.' : b.dataset.tool; render();
+    });
+    const ew = $('#editor-wrap');
+    if (ew) ew.onpointerdown = ev => {
+      const t = ev.target.closest && ev.target.closest('.ed-cell');
+      if (t) applyTool(+t.dataset.er, +t.dataset.ec);
     };
-    const pub = $('#cg-publish');
-    if (pub) pub.onclick = publishDraft;
+    document.querySelectorAll('[data-eddim]').forEach(b => b.onclick = () => editorStep(b.dataset.eddim, +b.dataset.eddelta));
+    const chk = $('#ed-check'); if (chk) chk.onclick = checkEditor;
+    const pubE = $('#ed-publish'); if (pubE) pubE.onclick = publishEditor;
+    const clr = $('#ed-clear'); if (clr) clr.onclick = clearEditor;
     document.querySelectorAll('.cg-play').forEach(b => b.onclick = () => { const l = findCommunity(b.dataset.id); if (l) startCommunity(l); });
     document.querySelectorAll('.cg-like').forEach(b => b.onclick = () => likeCommunity(b.dataset.id));
     document.querySelectorAll('.cg-report').forEach(b => b.onclick = () => reportCommunity(b.dataset.id));
