@@ -485,6 +485,33 @@ nav button.active { color: #fff; background: var(--accent); box-shadow: 0 8px 18
   background: color-mix(in srgb, var(--accent) 14%, var(--card-strong));
   box-shadow: 0 10px 30px color-mix(in srgb, var(--accent) 22%, transparent);
 }
+#conn-pill {
+  position: fixed;
+  top: calc(8px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 80;
+  background: var(--danger);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 7px 14px;
+  border-radius: 999px;
+  box-shadow: 0 6px 18px #0004;
+  animation: pop .3s cubic-bezier(.34,1.56,.64,1);
+  pointer-events: none;
+  max-width: 92vw;
+  text-align: center;
+}
+.boot {
+  min-height: 60vh;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+}
+.boot-cat { font-size: 54px; animation: bob 1.4s ease-in-out infinite; }
 .tut-icon {
   flex: 0 0 auto;
   width: 38px; height: 38px;

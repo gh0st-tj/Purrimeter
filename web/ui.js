@@ -57,6 +57,8 @@
     } catch (e) {
       S.online = false;
       return null;
+    } finally {
+      S.booting = false;
     }
   }
 
@@ -74,7 +76,8 @@
     lbTab: 'global',
     online: false, me: null,
     leaderboard: null, liveStats: null,
-    catVis: null,          // [r,c] where the cat sprite currently stands
+    friends: null, friendsLoading: false,
+    submitting: false, booting: true,
     animKey: '',           // board entrance animation guard
     lastFence: null,       // only the newest fence pops
   };
@@ -323,8 +326,11 @@
   }
   async function submit() {
     const ev = evaluate(S.level, S.fences);
-    if (ev.escaped || S.submitted) return;
+    if (ev.escaped || S.submitted || S.submitting) return;
     if (S.mode === 'daily' || S.mode === 'archive') {
+      S.submitting = true;
+      const btn = $('#btn-submit');
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Submitting…'; }
       try {
         await ensureAuth();
         const path = S.mode === 'daily' ? '/api/daily/submit' : `/api/archive/${S.archiveDay}/submit`;
@@ -358,13 +364,17 @@
           await startDaily();
         } else {
           toast(e.message || 'Network submit failed');
+          const b = $('#btn-submit');
+          if (b) { b.disabled = false; b.textContent = '✓ Submit'; }
         }
+      } finally {
+        S.submitting = false;
       }
       return;
     }
     if (S.mode === 'tutorial') store.set('tutorialDone', true);
     const target = S.level.target || ev.score;
-    const starsN = ev.score >= target ? 3 : ev.score >= 0.8 * target ? 2 : 1;
+    const starsN = ev.score >= target ? 3 : ev.score >= Math.ceil(0.8 * target) ? 2 : 1;
     const breakdown = scoreBreakdown(S.level, ev).lines;
     S.result = { score: ev.score, stars: starsN, fences: [...S.fences], walls: S.level.walls, breakdown };
     S.submitted = true; S.showOverlay = true; S.review = 'mine';
@@ -404,25 +414,40 @@
   // ---------- share ----------
   function currentShare() {
     const r = S.result; if (!r) return '';
+    let body;
     if (S.mode === 'daily' || S.mode === 'archive') {
       const day = S.mode === 'archive' ? S.archiveDay : S.day;
       const base = shareText(day, settings.name || 'You', r.score, S.level.target, r.stars, r.fences.length, r.walls, S.level)
         .replace(/\ncode: PURR-[A-Za-z0-9+/]+$/, '');
-      return base + (S.me && S.me.friendCode ? '\ncode: ' + S.me.friendCode : '');
+      body = base + (S.me && S.me.friendCode ? '\ncode: ' + S.me.friendCode : '');
+    } else {
+      // non-daily: same spoiler-safe puzzle picture, no friend code
+      const starLine = '⭐'.repeat(r.stars) + '☆'.repeat(3 - r.stars);
+      const pct = Math.round(100 * r.score / S.level.target);
+      body = `🐈 Purrimeter — ${S.level.name}\n${starLine} ${r.score} pts (${pct}% of optimal) · ${r.fences.length}/${r.walls} fences\n${levelEmojiGrid(S.level)}`;
     }
-    // non-daily: same spoiler-safe puzzle picture, no friend code
-    const starLine = '⭐'.repeat(r.stars) + '☆'.repeat(3 - r.stars);
-    const pct = Math.round(100 * r.score / S.level.target);
-    return `🐈 Purrimeter — ${S.level.name}\n${starLine} ${r.score} pts (${pct}% of optimal) · ${r.fences.length}/${r.walls} fences\n${levelEmojiGrid(S.level)}`;
+    return `${body}\n${location.origin}`;
   }
-  async function doShare() {
-    const txt = currentShare();
+  async function copyText(txt, okMsg) {
     try {
-      if (navigator.share) { await navigator.share({ text: txt }); return; }
       await navigator.clipboard.writeText(txt);
-      toast('Copied to clipboard!');
+      toast(okMsg || 'Copied to clipboard!');
     } catch (e) { toast('Copy failed — select the text manually'); }
   }
+  async function shareOrCopy(txt, okMsg) {
+    try {
+      if (navigator.share) { await navigator.share({ text: txt }); return; }
+    } catch (e) { if (e && e.name === 'AbortError') return; }
+    await copyText(txt, okMsg);
+  }
+  const doShare = () => shareOrCopy(currentShare());
+  function inviteText() {
+    const code = S.me && S.me.friendCode;
+    return `🐈 Add me on Purrimeter — a daily "fence in the cat" puzzle!` +
+      (code ? `\nMy friend code: ${code}` : '') +
+      `\nPlay: ${location.origin}`;
+  }
+  const doInvite = () => shareOrCopy(inviteText(), 'Invite copied!');
   let toastTimer;
   function toast(msg) {
     let t = $('#toast');
@@ -445,6 +470,17 @@
     if (S.view === 'ailab') bindAiLab();
     if (S.view === 'settings') bindSettings();
     if (S.view === 'ranks') bindRanks();
+    updateConnPill();
+  }
+  function updateConnPill() {
+    let pill = document.getElementById('conn-pill');
+    if (S.online || S.booting) { if (pill) pill.remove(); return; }
+    if (!pill) {
+      pill = document.createElement('div');
+      pill.id = 'conn-pill';
+      pill.textContent = '⚠️ Offline — playing locally, scores won’t sync';
+      document.body.appendChild(pill);
+    }
   }
 
   function navBar() {
@@ -764,7 +800,7 @@
       ? `<button class="btn primary" id="btn-next">Next level ▶</button>` : '';
     const aiNext = S.mode === 'ai' ? '<button class="btn" data-nav="ailab">✨ New AI level</button>' : '';
     const archBtn = S.mode === 'archive' ? '<button class="btn" data-nav="archive">📚 Archive</button>' : '';
-    // community comparison (daily only; demo bots + you)
+    // community comparison (daily only; live server stats)
     let community = '';
     if (S.mode === 'daily') {
       const stats = S.liveStats || S.leaderboard?.stats;
@@ -931,19 +967,57 @@
         <button class="btn ${S.lbTab === 'friends' ? 'primary' : ''}" data-tab="friends">Friends</button>
       </div>
       <div class="card">${list}</div>
-      ${S.lbTab === 'friends' ? `
-      <div class="card">
-        <h3>Add a friend</h3>
-        <div class="small soft">Paste their server friend code. Yours is in Settings.</div>
-        <div class="row" style="margin-top:8px">
-          <input id="friend-code" placeholder="PURR2-…">
-          <button class="btn primary" id="btn-addfriend">Add</button>
-        </div>
-      </div>
-      <div class="card small soft">Friend boards are server-backed and use signed codes, so forged codes are rejected.</div>` : `
+      ${S.lbTab === 'friends' ? renderFriendsPanel() : `
       <div class="card small soft">Global scores are live server submissions. Daily scores are accepted once per player.</div>`}
       ${community}${myStats}
       ${navBar()}`;
+  }
+  function renderFriendsPanel() {
+    const code = S.me && S.me.friendCode;
+    const data = S.friends && S.friends.friends;
+    let friendList;
+    if (!data) friendList = '<div class="center soft" style="padding:14px">Loading friends…</div>';
+    else if (!data.length) friendList = '<div class="center soft" style="padding:14px">No friends yet — share your code below to add some! 🐾</div>';
+    else friendList = data.map(f => `
+      <div class="lb-row">
+        <div class="grow"><b>${esc(f.name)}</b>
+          <div class="small soft">${f.daily ? `Today: ${f.daily.score} pts ${starStr(f.daily.stars)}` : 'Hasn’t played today'}</div></div>
+        <button class="btn ghost btn-rmfriend" data-friend="${f.playerId}" title="Remove friend" aria-label="Remove ${esc(f.name)}">✕</button>
+      </div>`).join('');
+    return `
+      <div class="card">
+        <h3>Your friends</h3>
+        ${friendList}
+      </div>
+      <div class="card">
+        <h3>Invite friends</h3>
+        <div class="small soft">Share your code. When they add it, you'll see each other's daily scores here.</div>
+        ${code ? `
+        <div class="row" style="margin-top:8px">
+          <input readonly id="my-code" value="${esc(code)}" onclick="this.select()">
+          <button class="btn" id="btn-copycode" type="button">Copy</button>
+        </div>
+        <button class="btn primary" id="btn-invite" type="button" style="margin-top:8px;width:100%">📣 Share invite</button>`
+        : '<div class="small soft" style="margin-top:8px">Connect to the server to get your friend code.</div>'}
+        <div class="row" style="margin-top:12px">
+          <input id="friend-code" placeholder="Paste a PURR2-… code">
+          <button class="btn primary" id="btn-addfriend" type="button">Add</button>
+        </div>
+      </div>`;
+  }
+  async function refreshFriends() {
+    if (S.friendsLoading) return;
+    S.friendsLoading = true;
+    try {
+      await ensureAuth();
+      S.friends = await apiFetch('/api/friends');
+      S.online = true;
+      if (S.view === 'ranks') render();
+    } catch (e) {
+      S.online = false;
+    } finally {
+      S.friendsLoading = false;
+    }
   }
   async function refreshLeaderboard() {
     if (S.ranksLoading) return;
@@ -963,18 +1037,35 @@
   }
   function bindRanks() {
     if (!S.leaderboard || S.leaderboard.scope !== S.lbTab) refreshLeaderboard();
+    if (S.lbTab === 'friends' && !S.friends) refreshFriends();
     document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { S.lbTab = b.dataset.tab; S.leaderboard = null; render(); });
     const add = $('#btn-addfriend');
     if (add) add.onclick = async () => {
+      const input = $('#friend-code');
+      const code = input ? input.value.trim() : '';
+      if (!code) { toast('Paste a friend code first'); return; }
       try {
         await ensureAuth();
-        const res = await apiFetch('/api/friends', { method: 'POST', body: JSON.stringify({ code: $('#friend-code').value }) });
-        toast('Added ' + res.friend.name + '!');
-        refreshLeaderboard();
+        const res = await apiFetch('/api/friends', { method: 'POST', body: JSON.stringify({ code }) });
+        toast('Added ' + res.friend.name + '! 🎉');
+        S.friends = null; refreshFriends(); refreshLeaderboard();
       } catch (e) {
         toast(e.message || 'Invalid code');
       }
     };
+    const copyCode = $('#btn-copycode');
+    if (copyCode) copyCode.onclick = () => copyText(S.me.friendCode, 'Friend code copied!');
+    const invite = $('#btn-invite');
+    if (invite) invite.onclick = doInvite;
+    document.querySelectorAll('.btn-rmfriend').forEach(b => b.onclick = async () => {
+      try {
+        await ensureAuth();
+        await apiFetch('/api/friends/' + encodeURIComponent(b.dataset.friend), { method: 'DELETE' });
+        S.friends = null; refreshFriends(); refreshLeaderboard();
+      } catch (e) {
+        toast(e.message || 'Could not remove');
+      }
+    });
   }
 
   // --- AI lab ---
@@ -1009,9 +1100,14 @@
         <label>Your name (for leaderboards & sharing)</label>
         <input id="set-name" value="${esc(settings.name)}" maxlength="14">
         <div class="small soft" style="margin-top:8px">Your device account is anonymous. This name is shown on daily leaderboards after you submit.</div>
-        ${S.me && S.me.friendCode ? `<label>Friend code</label><input readonly value="${esc(S.me.friendCode)}">` : ''}
+        ${S.me && S.me.friendCode ? `<label>Friend code</label>
+        <div class="row">
+          <input readonly id="set-code" value="${esc(S.me.friendCode)}" onclick="this.select()">
+          <button class="btn" id="btn-copycode2" type="button">Copy</button>
+        </div>` : ''}
         <div class="actions" style="justify-content:flex-start">
           <button class="btn primary" id="btn-save">Save</button>
+          ${S.me && S.me.friendCode ? '<button class="btn" id="btn-invite2" type="button">📣 Invite a friend</button>' : ''}
         </div>
       </div>
       <div class="card small soft">
@@ -1020,6 +1116,10 @@
       ${navBar()}`;
   }
   function bindSettings() {
+    const copyCode = $('#btn-copycode2');
+    if (copyCode) copyCode.onclick = () => copyText(S.me.friendCode, 'Friend code copied!');
+    const invite = $('#btn-invite2');
+    if (invite) invite.onclick = doInvite;
     $('#btn-save').onclick = async () => {
       settings = {
         name: $('#set-name').value.trim() || 'You',
@@ -1052,6 +1152,7 @@
     if (lvEl) startCampaign(+lvEl.dataset.lv);
   });
   window.addEventListener('resize', () => { if (S.view === 'game') render(); });
+  app().innerHTML = '<div class="boot"><div class="boot-cat">🐈</div><div class="small soft">Loading your garden…</div></div>';
   loadMe().then(() => {
     if (!store.get('tutorialDone', false)) startTutorial(); else render();
   });

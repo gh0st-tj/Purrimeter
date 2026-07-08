@@ -196,6 +196,7 @@ async function buildServer() {
   await app.register(helmet, { global: true });
   await app.register(cors, {
     credentials: true,
+    methods: ['GET', 'HEAD', 'POST', 'DELETE'],
     origin(origin, cb) {
       if (!origin || allowedOrigins.has(origin)) return cb(null, true);
       cb(new Error('Origin not allowed'), false);
@@ -403,22 +404,69 @@ async function buildServer() {
     return { ok: true, name };
   });
 
+  async function linkFriends(aId, bId) {
+    const now = new Date();
+    // Mutual friendship: both players see each other on friends boards.
+    const pairs = [
+      { playerId: aId, friendPlayerId: bId, createdAt: now },
+      { playerId: bId, friendPlayerId: aId, createdAt: now },
+    ];
+    for (const doc of pairs) {
+      try {
+        await collections.friendships.insertOne(doc);
+      } catch (error) {
+        if (error.code !== 11000) throw error;
+      }
+    }
+  }
+
   app.post('/api/friends', { preHandler: auth }, async (request, reply) => {
     const friendPlayerId = parseFriendCode(request.body?.code, shareSecret);
     if (!friendPlayerId) return reply.code(400).send({ error: 'invalid friend code' });
     if (friendPlayerId === String(request.player._id)) return reply.code(400).send({ error: 'cannot add yourself' });
     const friend = await collections.players.findOne({ _id: new ObjectId(friendPlayerId) });
     if (!friend) return reply.code(404).send({ error: 'friend not found' });
-    try {
-      await collections.friendships.insertOne({
-        playerId: request.player._id,
-        friendPlayerId: friend._id,
-        createdAt: new Date(),
-      });
-    } catch (error) {
-      if (error.code !== 11000) throw error;
-    }
+    await linkFriends(request.player._id, friend._id);
     return { ok: true, friend: { playerId: String(friend._id), name: friend.name || 'Anonymous' } };
+  });
+
+  app.get('/api/friends', { preHandler: auth }, async request => {
+    const rels = await collections.friendships
+      .find({ playerId: request.player._id }).sort({ createdAt: 1 }).toArray();
+    const ids = rels.map(r => r.friendPlayerId);
+    if (!ids.length) return { day: dayNumber(), friends: [] };
+    const day = dayNumber();
+    const [players, subs] = await Promise.all([
+      collections.players.find({ _id: { $in: ids } }, { projection: { name: 1 } }).toArray(),
+      collections.submissions
+        .find({ kind: 'daily', day, playerId: { $in: ids } })
+        .project({ playerId: 1, score: 1, stars: 1 }).toArray(),
+    ]);
+    const nameById = new Map(players.map(p => [String(p._id), p.name || 'Anonymous']));
+    const subById = new Map(subs.map(s => [String(s.playerId), s]));
+    const friends = ids.map(id => {
+      const sid = String(id);
+      const s = subById.get(sid);
+      return {
+        playerId: sid,
+        name: nameById.get(sid) || 'Anonymous',
+        daily: s ? { score: s.score, stars: s.stars } : null,
+      };
+    });
+    return { day, friends };
+  });
+
+  app.delete('/api/friends/:playerId', { preHandler: auth }, async (request, reply) => {
+    const other = request.params.playerId;
+    if (!ObjectId.isValid(other)) return reply.code(400).send({ error: 'invalid player id' });
+    const otherId = new ObjectId(other);
+    await collections.friendships.deleteMany({
+      $or: [
+        { playerId: request.player._id, friendPlayerId: otherId },
+        { playerId: otherId, friendPlayerId: request.player._id },
+      ],
+    });
+    return { ok: true };
   });
 
   app.get('/api/daily', { preHandler: auth }, async request => {
@@ -760,4 +808,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { buildServer, dailySeed };
+module.exports = { buildServer, dailySeed, starCount, validateName, signedFriendCode, parseFriendCode };
