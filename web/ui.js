@@ -456,7 +456,7 @@
     let t = $('#toast');
     if (!t) { t = document.createElement('div'); t.id = 'toast'; document.body.appendChild(t); }
     t.textContent = msg;
-    t.style.cssText = 'position:fixed;bottom:86px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg1);padding:10px 18px;border-radius:999px;font-weight:800;z-index:70;font-size:14px';
+    t.style.cssText = 'position:fixed;bottom:calc(86px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg1);padding:10px 18px;border-radius:999px;font-weight:800;z-index:70;font-size:14px;max-width:92vw;text-align:center';
     clearTimeout(toastTimer); toastTimer = setTimeout(() => t.remove(), 2200);
   }
 
@@ -718,6 +718,15 @@
     }
   }
 
+  // Tile size honours BOTH axes: width (phones in portrait) and height (short
+  // landscape screens / laptops), so the whole game — header, HUD, board and
+  // actions — fits without scrolling wherever possible. Floor of 24px keeps
+  // tiles tappable; if a level is too big for that, the page scrolls instead.
+  function boardTileSize(lv, hasTut) {
+    const wBudget = Math.min(window.innerWidth, 560) - 60;
+    const hBudget = window.innerHeight - (hasTut ? 340 : 245);
+    return Math.max(24, Math.min(46, Math.floor(wBudget / lv.cols), Math.floor(hBudget / lv.rows)));
+  }
   function renderGame() {
     const lv = S.level;
     const shown = displayedFences();
@@ -726,7 +735,7 @@
     const step = tutStep();
     const status = statusHTML(ev, optimalView);
     const pips = pipsHTML(lv, shown);
-    const ts = Math.min(46, Math.floor((Math.min(window.innerWidth, 560) - 60) / lv.cols));
+    const ts = boardTileSize(lv, !!step);
     const freshBoard = S.animKey !== S.mode + lv.name;
     S.animKey = S.mode + lv.name;
     const justEnclosed = !ev.escaped && !S.wasEnclosed && !freshBoard;
@@ -785,7 +794,7 @@
       </div>
       ${tutBanner}
       <div id="hud"><div class="pips">${pips}</div>${status}</div>
-      <div id="board-wrap" class="${step && step.type === 'info' && S.fences.size === 0 ? 'tut-wait' : ''}"><div id="board" style="--ts:${ts}px;grid-template-columns:repeat(${lv.cols},${ts}px)">${tiles}</div></div>
+      <div id="board-wrap" class="${step && step.type === 'info' && S.fences.size === 0 ? 'tut-wait' : ''}"><div id="board" style="--ts:${ts}px;--cols:${lv.cols}">${tiles}</div></div>
       <div id="tile-hint" class="center"> </div>
       ${optimalView ? '<div class="center small soft" style="margin-bottom:6px">✨ Best-known solution found by the solver</div>' : ''}
       ${playActions}${reviewBar}
@@ -1107,7 +1116,7 @@
         <pre class="cg-thumb">${esc(levelEmojiGrid(l.def))}</pre>
         <div class="grow">
           <b>${esc(l.name)}</b>${l.status && l.status !== 'active' ? ' <span class="small soft">(under review)</span>' : ''}
-          <div class="small soft">by ${esc(l.author)}${l.mine ? ' (you)' : ''} · ${l.rows}×${l.cols} · goal ${l.target} · ♥ ${l.likes} · ▶ ${l.plays}</div>
+          <div class="small soft">by ${esc(l.author)}${l.mine ? ' (you)' : ''} · ${l.rows}×${l.cols} · ${l.def.walls} fences · ♥ ${l.likes} · ▶ ${l.plays}</div>
           <div class="actions" style="justify-content:flex-start;margin-top:8px">
             <button class="btn primary cg-play" data-id="${l.id}">▶ Play</button>
             <button class="btn cg-like ${l.likedByMe ? 'toggled' : ''}" data-id="${l.id}" ${l.mine ? 'disabled' : ''}>♥ ${l.likes}</button>
@@ -1156,7 +1165,7 @@
     const ts = Math.min(40, Math.max(20, Math.floor((Math.min(window.innerWidth, 560) - 56) / e.cols)));
     let cells = '';
     for (let r = 0; r < e.rows; r++) for (let c = 0; c < e.cols; c++) cells += editorTile(e.cells[r][c], r, c);
-    return `<div id="editor-board" style="--ts:${ts}px;grid-template-columns:repeat(${e.cols},${ts}px)">${cells}</div>`;
+    return `<div id="editor-board" style="--ts:${ts}px;--cols:${e.cols}">${cells}</div>`;
   }
   function renderCommunityCreate() {
     ensureEditor();
@@ -1432,7 +1441,35 @@
     const lvEl = e.target.closest && e.target.closest('[data-lv]');
     if (lvEl) startCampaign(+lvEl.dataset.lv);
   });
-  window.addEventListener('resize', () => { if (S.view === 'game') render(); });
+  // Resize/rotation: retune tile size in place. A full render() here would
+  // restart every tile animation (breaks the incremental-rendering contract).
+  let resizeTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      const board = $('#board');
+      if (S.view === 'game' && S.level && board) {
+        board.style.setProperty('--ts', boardTileSize(S.level, !!tutStep()) + 'px');
+      }
+      const ed = $('#editor-board');
+      if (ed && S.editor) {
+        const e = S.editor;
+        const ts = Math.min(40, Math.max(20, Math.floor((Math.min(window.innerWidth, 560) - 56) / e.cols)));
+        ed.style.setProperty('--ts', ts + 'px');
+      }
+    }, 100);
+  });
+  // Desktop niceties: ⌘/Ctrl+Z undo, Enter submit, Esc closes the results card.
+  document.addEventListener('keydown', e => {
+    if (e.target && /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(e.target.tagName)) return;
+    if (S.view !== 'game') return;
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); undo(); return; }
+    if (e.key === 'Escape' && S.showOverlay) { S.showOverlay = false; render(); return; }
+    if (e.key === 'Enter' && !S.submitted) {
+      const b = $('#btn-submit');
+      if (b && !b.disabled) { e.preventDefault(); submit(); }
+    }
+  });
   app().innerHTML = '<div class="boot"><div class="boot-cat">🐈</div><div class="small soft">Loading your garden…</div></div>';
   loadMe().then(() => {
     if (!store.get('tutorialDone', false)) startTutorial(); else render();
