@@ -28,14 +28,22 @@
   async function apiFetch(path, opts = {}) {
     const headers = { 'content-type': 'application/json', ...(opts.headers || {}) };
     if (auth && auth.token) headers.authorization = 'Bearer ' + auth.token;
-    const res = await fetch(API_BASE + path, { ...opts, headers, credentials: 'include' });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const err = new Error(data.error || `API ${res.status}`);
-      err.status = res.status;
-      throw err;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6500);
+    try {
+      const res = await fetch(API_BASE + path, {
+        ...opts, headers, credentials: 'include', signal: opts.signal || controller.signal,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const err = new Error(data.error || `API ${res.status}`);
+        err.status = res.status;
+        throw err;
+      }
+      return data;
+    } finally {
+      clearTimeout(timeout);
     }
-    return data;
   }
   async function ensureAuth() {
     if (auth && auth.token) return auth;
@@ -466,9 +474,10 @@
   // ---------- rendering ----------
   function render() {
     const views = { home: renderHome, game: renderGame, ranks: renderRanks, community: renderCommunity, settings: renderSettings, archive: renderArchive };
+    app().dataset.view = S.view;
     app().innerHTML = views[S.view]();
     bindNav();
-    if (S.view === 'home') { const t = $('#btn-tutorial'); if (t) t.onclick = startTutorial; }
+    if (S.view === 'home') document.querySelectorAll('[data-tutorial]').forEach(t => { t.onclick = startTutorial; });
     if (S.view === 'game') { bindBoard(); animateOverlay(); primeBoard(); }
     if (S.view === 'community') bindCommunity();
     if (S.view === 'settings') bindSettings();
@@ -505,7 +514,7 @@
     const dr = dailyResult();
     const beaten = CAMPAIGN.filter((_, i) => prog[i] && prog[i].stars).length;
     const totalStars = CAMPAIGN.reduce((sum, _, i) => sum + ((prog[i] && prog[i].stars) || 0), 0);
-    const progressPct = CAMPAIGN.length <= 1 ? 100 : Math.round(100 * Math.max(0, beaten - 1) / (CAMPAIGN.length - 1));
+    const frontier = campaignFrontier(prog);
     const levelIcon = lv => {
       const flat = lv.map.join('');
       if (flat.includes('1')) return '📦';
@@ -531,35 +540,35 @@
           <button class="btn ghost" data-nav="archive">📚 Archive</button>
         </div>
       </section>`;
-    // winding garden path: cat stands at the next unbeaten level
-    const xs = [24, 72, 58, 30, 76, 24, 48, 70];
-    const stepY = 122, padY = 92;
-    const pathH = padY + stepY * (CAMPAIGN.length - 1) + 92;
-    let catAt = campaignFrontier(prog);
-    const pts = CAMPAIGN.map((_, i) => [xs[i % xs.length], padY + i * stepY]);
-    let d = `M ${pts[0][0]} ${pts[0][1]}`;
-    for (let i = 1; i < pts.length; i++) {
-      const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
-      d += ` C ${x0} ${y0 + stepY * 0.55}, ${x1} ${y1 - stepY * 0.55}, ${x1} ${y1}`;
-    }
-    const nodes = CAMPAIGN.map((lv, i) => {
+    const chapters = [
+      { name: 'First Paws', note: 'Learn to close a clean perimeter', from: 0, to: 6 },
+      { name: 'Garden Tricks', note: 'Bonuses, hazards, and smart shortcuts', from: 7, to: 14 },
+      { name: 'Wild Meadows', note: 'Mixed terrain with tighter budgets', from: 15, to: 22 },
+      { name: 'Master Grounds', note: 'Open-ended optimization puzzles', from: 23, to: CAMPAIGN.length - 1 },
+    ];
+    const levelButton = (lv, i) => {
       const p = prog[i] || { stars: 0, score: 0 };
       const done = p.stars > 0;
       const unlocked = isCampaignUnlocked(i, prog);
-      const state = done ? 'done' : i === catAt ? 'next' : 'locked';
-      return `<div class="path-node ${done ? 'done' : ''} ${i === catAt ? 'next' : ''} ${unlocked ? '' : 'locked'}" data-lv="${i}"
-        style="left:${pts[i][0]}%;top:${pts[i][1]}px">
-        ${i === catAt ? '<div class="path-cat cat">🐈</div>' : ''}
-        <div class="path-card">
-          <div class="node-top">
-            <span class="node-badge">${levelIcon(lv)}</span>
-            <span class="node-meta">${state === 'done' ? 'Cleared' : state === 'next' ? 'Next' : 'Locked'}</span>
-          </div>
-          <b>${esc(lv.name)}</b>
-          <span class="node-stats">${lv.rows}×${lv.cols} garden · ${lv.walls} fences</span>
-          <span class="stars small">${'★'.repeat(p.stars)}<span class="off">${'★'.repeat(3 - p.stars)}</span></span>
-        </div>
-      </div>`;
+      const current = i === frontier;
+      const state = done ? `${p.stars} of 3 stars` : current ? 'Next garden' : unlocked ? 'Open garden' : 'Locked';
+      return `<button class="level-tile ${done ? 'done' : ''} ${current ? 'next' : ''} ${unlocked ? '' : 'locked'}" data-lv="${i}"
+        aria-label="Level ${i + 1}, ${esc(lv.name)}, ${state}">
+        <span class="level-top"><span class="level-number">${String(i + 1).padStart(2, '0')}</span><span class="level-icon">${current ? '🐈' : unlocked ? levelIcon(lv) : '🔒'}</span></span>
+        <b>${esc(lv.name)}</b>
+        <span class="level-spec">${lv.rows}×${lv.cols} · ${lv.walls} fences</span>
+        <span class="stars" aria-hidden="true">${'★'.repeat(p.stars)}<span class="off">${'★'.repeat(3 - p.stars)}</span></span>
+      </button>`;
+    };
+    const chapterHtml = chapters.map(ch => {
+      const levels = CAMPAIGN.slice(ch.from, ch.to + 1).map((lv, offset) => levelButton(lv, ch.from + offset)).join('');
+      const cleared = CAMPAIGN.slice(ch.from, ch.to + 1).filter((_, offset) => prog[ch.from + offset]?.stars).length;
+      const isCurrent = frontier >= ch.from && frontier <= ch.to;
+      const isOpen = window.innerWidth >= 860 || isCurrent;
+      return `<details class="campaign-chapter ${isCurrent ? 'current' : ''}" ${isOpen ? 'open' : ''}>
+        <summary class="chapter-head"><div><h3>${ch.name}</h3><span>${ch.note} · ${cleared}/${ch.to - ch.from + 1} cleared</span></div><span class="chapter-range">${ch.from + 1}–${ch.to + 1}</span></summary>
+        <div class="level-grid">${levels}</div>
+      </details>`;
     }).join('');
     const camp = `
       <section class="trail-card card">
@@ -571,26 +580,24 @@
           <div class="progress-pill">${Math.round(100 * beaten / CAMPAIGN.length)}%</div>
         </div>
         <div class="trail-progress"><span style="width:${Math.round(100 * beaten / CAMPAIGN.length)}%"></span></div>
-        <div class="path-wrap" style="height:${pathH}px">
-        <svg viewBox="0 0 100 ${pathH}" preserveAspectRatio="none">
-          <path class="trail-shadow" d="${d}" fill="none"/>
-          <path class="trail-path" d="${d}" fill="none" pathLength="100"/>
-          <path class="trail-path trail-done" d="${d}" fill="none" pathLength="100" style="stroke-dasharray:${progressPct} 100"/>
-        </svg>
-        ${nodes}
-        </div>
+        <div class="campaign-chapters">${chapterHtml}</div>
       </section>`;
     return `
       <section class="hero-card">
-        <div>
-          <div class="eyebrow">Enclosure puzzle</div>
+        <div class="hero-copy">
+          <div class="brand-lockup"><span class="brand-mark">🐾</span><span>Purrimeter</span></div>
+          <div class="eyebrow">A cozy puzzle with sharp edges</div>
           <h1>Purrimeter</h1>
-          <p>Fence in the cat, claim the best meadow, and spend every fence with intent.</p>
+          <p>Build a tiny fence. Claim a huge meadow. Every tile matters.</p>
+          <div class="hero-actions">
+            <button class="btn primary btn-lg" data-lv="${frontier}">${beaten ? 'Continue campaign' : 'Start campaign'} <span>→</span></button>
+            <button class="btn ghost" data-tutorial>How to play</button>
+          </div>
         </div>
         <div class="hero-art" aria-hidden="true">
-          <span class="hero-sun">☀</span>
+          <span class="hero-cloud">☁</span><span class="hero-sun">☀</span>
           <span class="hero-cat cat">🐈</span>
-          <span class="hero-fence">▥▥▥</span>
+          <span class="hero-fence"><i></i><i></i><i></i><i></i><i></i></span>
         </div>
       </section>
       <div class="stats home-stats">
@@ -599,20 +606,26 @@
         <div class="stat"><b>${st.three}</b><span>3-star</span></div>
         <div class="stat"><b>${st.bestScore}</b><span>best score</span></div>
       </div>
-      ${daily}
-      ${camp}
-      <div class="card">
-        <div class="row">
-          <div class="grow small soft">
-            <b style="color:var(--ink)">New here?</b> Learn the game in 30 seconds with a guided garden.
+      <div class="home-layout">
+        <main>${daily}${camp}</main>
+        <aside class="home-aside">
+          <div class="card onboarding-card">
+            <div class="onboarding-icon">🎓</div>
+            <div class="eyebrow">New here?</div>
+            <h2>Learn in one garden</h2>
+            <p class="small soft">A 30-second guided puzzle teaches every rule you need.</p>
+            <button class="btn primary" data-tutorial>Play tutorial</button>
           </div>
-          <button class="btn primary" id="btn-tutorial">🎓 Tutorial</button>
-        </div>
-      </div>
-      <div class="card small soft">
-        <b style="color:var(--ink)">Quick rules:</b> tap grass to place fences. The cat moves ↑↓←→ only — if it reaches the edge, it escapes.
-        Once it's trapped, its meadow lights up: every glowing tile is a point, plus 🧶+3 · 🐟+10 · 🥒−5 · 📦 teleports.
-        Diagonal gaps are safe!
+          <div class="card rules-card small soft">
+            <div class="eyebrow">Field notes</div>
+            <h3>Score the best meadow</h3>
+            <p>Tap grass to place fences. Mochi moves only ↑ ↓ ← →, so diagonal gaps are safe.</p>
+            <div class="rule-list">
+              <span><b>🧶 +3</b> Yarn</span><span><b>🐟 +10</b> Tuna</span>
+              <span><b>🥒 −5</b> Cucumber</span><span><b>📦</b> Teleport</span>
+            </div>
+          </div>
+        </aside>
       </div>
       ${navBar()}`;
   }
@@ -659,14 +672,17 @@
     else if (ch === '#') info = '🪨 Rock — blocks the cat. A free wall!';
     const meadowDelay = inMeadow && ctx.justEnclosed
       ? (Math.abs(r - lv.cat[0]) + Math.abs(c - lv.cat[1])) * 55 : null;
-    return { cls, inner, info, meadowDelay };
+    const label = info || `${fenced ? 'Fence' : 'Grass'} at row ${r + 1}, column ${c + 1}`;
+    const tutorialTarget = !ctx.step || (ctx.step.type === 'fence' && r === ctx.step.cell[0] && c === ctx.step.cell[1]);
+    const disabled = ch === '~' || ch === '#' || isCat || ctx.optimalView || S.submitted || !tutorialTarget;
+    return { cls, inner, info, label, fenced, disabled, meadowDelay };
   }
   function statusHTML(ev, optimalView) {
     return optimalView
-      ? `<span id="status" class="gold">🏆 Optimal: ${ev.score} pts</span>`
+      ? `<span id="status" class="gold" aria-live="polite">🏆 Optimal: ${ev.score} pts</span>`
       : ev.escaped
-        ? '<span id="status" class="bad">🚨 Cat can escape!</span>'
-        : `<span id="status" class="ok">✅ ${ev.score} pts</span>`;
+        ? '<span id="status" class="bad" aria-live="polite">🚨 Cat can escape!</span>'
+        : `<span id="status" class="ok" aria-live="polite">✅ ${ev.score} pts</span>`;
   }
   const pipsHTML = (lv, shown) =>
     Array.from({ length: lv.walls }, (_, i) => `<div class="pip ${i < shown.size ? 'used' : ''}"></div>`).join('');
@@ -704,11 +720,17 @@
       if (el._h !== t.inner) { el.innerHTML = t.inner; el._h = t.inner; }
       if (t.info) { el.dataset.info = t.info; el.title = t.info; }
       else { delete el.dataset.info; el.removeAttribute('title'); }
+      el.setAttribute('aria-label', t.label);
+      el.setAttribute('aria-pressed', String(t.fenced));
+      el.setAttribute('aria-disabled', String(t.disabled));
       el.style.animationDelay = t.meadowDelay !== null ? t.meadowDelay + 'ms' : '';
     });
     const pips = $('#hud .pips'); if (pips) pips.innerHTML = pipsHTML(lv, shown);
     const st = $('#status'); if (st) st.outerHTML = statusHTML(ev, ctx.optimalView);
+    const statusNote = $('.status-note');
+    if (statusNote) statusNote.textContent = ev.escaped ? 'Close every route to the edge' : 'The highlighted meadow is secure';
     const sub = $('#game-sub'); if (sub && !S.submitted) sub.textContent = `${lv.walls - S.fences.size} of ${lv.walls} fences left`;
+    const left = $('#fence-left'); if (left && !S.submitted) left.textContent = lv.walls - S.fences.size;
     const undoB = $('#btn-undo'); if (undoB) undoB.disabled = !S.undo.length;
     const resetB = $('#btn-reset'); if (resetB) resetB.disabled = !S.fences.size;
     const subB = $('#btn-submit');
@@ -720,12 +742,18 @@
 
   // Tile size honours BOTH axes: width (phones in portrait) and height (short
   // landscape screens / laptops), so the whole game — header, HUD, board and
-  // actions — fits without scrolling wherever possible. Floor of 24px keeps
-  // tiles tappable; if a level is too big for that, the page scrolls instead.
+  // actions — fits without scrolling wherever possible. Dense 11–12 column
+  // boards may reach 20px on narrow phones rather than causing side-scroll.
   function boardTileSize(lv, hasTut) {
-    const wBudget = Math.min(window.innerWidth, 560) - 60;
-    const hBudget = window.innerHeight - (hasTut ? 340 : 245);
-    return Math.max(24, Math.min(46, Math.floor(wBudget / lv.cols), Math.floor(hBudget / lv.rows)));
+    const viewportW = document.documentElement.clientWidth || window.innerWidth;
+    const wide = viewportW >= 860;
+    const gap = wide ? 4 : 3;
+    const padding = wide ? 24 : 16;
+    const wBudget = wide ? Math.min(viewportW * 0.62, 660) : Math.min(viewportW, 560) - 20;
+    const hBudget = window.innerHeight - (hasTut ? 330 : wide ? 178 : 265);
+    const byWidth = Math.floor((wBudget - padding - gap * (lv.cols - 1)) / lv.cols);
+    const byHeight = Math.floor((hBudget - padding - gap * (lv.rows - 1)) / lv.rows);
+    return Math.max(wide ? 24 : 20, Math.min(wide ? 54 : 46, byWidth, byHeight));
   }
   function renderGame() {
     const lv = S.level;
@@ -742,6 +770,7 @@
     S.wasEnclosed = !ev.escaped;
     const ctx = { shown, optimalView, step, justEnclosed };
     let tiles = '';
+    let hasTabStop = false;
     for (let r = 0; r < lv.rows; r++) for (let c = 0; c < lv.cols; c++) {
       const t = computeTile(lv, r, c, ev, ctx);
       const cls = t.cls + (freshBoard ? ' enter' : '');
@@ -749,7 +778,10 @@
       if (freshBoard) delay = `animation-delay:${(r + c) * 28}ms`;
       else if (t.meadowDelay !== null) delay = `animation-delay:${t.meadowDelay}ms`;
       const infoAttr = t.info ? ` data-info="${t.info}" title="${t.info}"` : '';
-      tiles += `<div class="${cls}" data-r="${r}" data-c="${c}"${infoAttr} style="${delay}">${t.inner}</div>`;
+      const tabStop = !hasTabStop && !t.disabled;
+      if (tabStop) hasTabStop = true;
+      tiles += `<button type="button" class="${cls}" data-r="${r}" data-c="${c}"${infoAttr}
+        aria-label="${esc(t.label)}" aria-pressed="${t.fenced}" aria-disabled="${t.disabled}" tabindex="${tabStop ? 0 : -1}" style="${delay}">${t.inner}</button>`;
     }
     const tutDots = TUT_STEPS.map((_, i) =>
       `<span class="${i < S.tutStep ? 'done' : i === S.tutStep ? 'on' : ''}"></span>`).join('');
@@ -778,26 +810,40 @@
         ${nextInBar}
       </div>` : '';
     const playActions = !S.submitted ? `
-      <div class="actions">
+      <div class="actions play-actions">
         ${step ? '' : `<button class="btn" id="btn-undo" ${S.undo.length ? '' : 'disabled'}>↶ Undo</button>`}
         ${step ? '' : `<button class="btn" id="btn-reset" ${S.fences.size ? '' : 'disabled'}>↺ Reset</button>`}
-        <button class="btn good ${step && step.type === 'done' ? 'attn' : ''} ${!ev.escaped && !step ? 'ready' : ''}" id="btn-submit" ${ev.escaped || (step && step.type !== 'done') ? 'disabled' : ''}>✓ Submit</button>
+        <button class="btn good ${step && step.type === 'done' ? 'attn' : ''} ${!ev.escaped && !step ? 'ready' : ''}" id="btn-submit" ${ev.escaped || (step && step.type !== 'done') ? 'disabled' : ''}>✓ Submit meadow</button>
       </div>` : '';
     return `
-      <div class="row" style="margin-bottom:8px">
+      <div class="game-shell">
+      <header class="game-topbar">
         ${S.mode === 'playtest'
           ? '<button class="btn ghost" id="btn-exit-playtest">← Editor</button>'
           : `<button class="btn ghost" data-nav="home">← ${step ? 'Skip' : 'Back'}</button>`}
-        <div class="grow center"><b>${S.mode === 'playtest' ? '▶ Playtest' : esc(step ? 'Tutorial' : lv.name)}</b>
+        <div class="game-title"><span class="eyebrow">${S.mode === 'daily' ? 'Daily challenge' : S.mode === 'campaign' ? `Garden ${S.levelIndex + 1}` : S.mode}</span>
+          <b>${S.mode === 'playtest' ? '▶ Playtest' : esc(step ? 'Tutorial' : lv.name)}</b>
           <div class="small soft" id="game-sub">${S.submitted ? `Optimal: ${lv.target} pts` : `${lv.walls - S.fences.size} of ${lv.walls} fences left`}</div></div>
-        <span style="width:70px"></span>
-      </div>
+        <span class="game-top-spacer" aria-hidden="true"></span>
+      </header>
       ${tutBanner}
-      <div id="hud"><div class="pips">${pips}</div>${status}</div>
-      <div id="board-wrap" class="${step && step.type === 'info' && S.fences.size === 0 ? 'tut-wait' : ''}"><div id="board" style="--ts:${ts}px;--cols:${lv.cols}">${tiles}</div></div>
-      <div id="tile-hint" class="center"> </div>
-      ${optimalView ? '<div class="center small soft" style="margin-bottom:6px">✨ Best-known solution found by the solver</div>' : ''}
-      ${playActions}${reviewBar}
+      <div class="game-layout">
+        <div class="game-hud" id="hud">
+          <div class="fence-budget"><span class="eyebrow">Fence budget</span><strong><span id="fence-left">${Math.max(0, lv.walls - shown.size)}</span><small> left</small></strong><div class="pips">${pips}</div></div>
+          <div class="game-status">${status}<span class="status-note">${ev.escaped ? 'Close every route to the edge' : 'The highlighted meadow is secure'}</span></div>
+        </div>
+        <section class="board-column" aria-label="Puzzle board">
+          <div id="board-wrap" class="${step && step.type === 'info' && S.fences.size === 0 ? 'tut-wait' : ''}"><div id="board" role="group" aria-label="Puzzle grid" style="--ts:${ts}px;--cols:${lv.cols}">${tiles}</div></div>
+          <div id="tile-hint" class="center" aria-live="polite"> </div>
+          ${optimalView ? '<div class="center small soft optimal-note">✨ Best-known solution found by the solver</div>' : ''}
+        </section>
+        <aside class="game-actions-panel">
+          <div class="game-legend" aria-label="Scoring legend"><span>🧶 <b>+3</b></span><span>🐟 <b>+10</b></span><span>🥒 <b>−5</b></span><span>📦 <b>warp</b></span></div>
+          ${playActions}${reviewBar}
+          <div class="shortcut-note small soft">Desktop: <kbd>⌘Z</kbd> undo · <kbd>Enter</kbd> submit</div>
+        </aside>
+      </div>
+      </div>
       ${overlay}${navBar()}`;
   }
   function renderResultOverlay() {
@@ -868,7 +914,24 @@
     // strictly one tap = one fence (no drag-painting)
     board.addEventListener('pointerdown', e => {
       const t = cellOf(e.target); if (!t) return;
+      e.preventDefault();
       tileTap(+t.dataset.r, +t.dataset.c);
+    });
+    board.addEventListener('keydown', e => {
+      const t = cellOf(e.target); if (!t) return;
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        if (t.getAttribute('aria-disabled') !== 'true') tileTap(+t.dataset.r, +t.dataset.c);
+        return;
+      }
+      const arrows = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
+      const move = arrows[e.key]; if (!move) return;
+      const nr = Math.max(0, Math.min(S.level.rows - 1, +t.dataset.r + move[0]));
+      const nc = Math.max(0, Math.min(S.level.cols - 1, +t.dataset.c + move[1]));
+      const next = board.querySelector(`.tile[data-r="${nr}"][data-c="${nc}"]`);
+      if (!next || next === t) return;
+      e.preventDefault();
+      t.tabIndex = -1; next.tabIndex = 0; next.focus();
     });
     // hover hints for objects (desktop)
     const hint = $('#tile-hint');
@@ -1470,8 +1533,12 @@
       if (b && !b.disabled) { e.preventDefault(); submit(); }
     }
   });
-  app().innerHTML = '<div class="boot"><div class="boot-cat">🐈</div><div class="small soft">Loading your garden…</div></div>';
+  // The game is local-first: never make the first paint wait for the API.
+  // Connectivity hydrates in the background and only refreshes non-game views,
+  // so a slow network cannot erase or interrupt a puzzle in progress.
+  app().dataset.view = 'boot';
+  if (!store.get('tutorialDone', false)) startTutorial(); else render();
   loadMe().then(() => {
-    if (!store.get('tutorialDone', false)) startTutorial(); else render();
+    if (S.view !== 'game') render(); else updateConnPill();
   });
 })();
