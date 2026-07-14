@@ -954,6 +954,8 @@ label { font-size: 12px; font-weight: 900; color: var(--ink-soft); display: bloc
   margin-bottom: 10px;
 }
 .game-topbar > .btn { justify-self: start; }
+.game-topbar > .game-prev { justify-self: end; padding-inline: 6px; font-size: 12px; }
+.prev-short { display: none; }
 .game-top-spacer { width: 110px; }
 .game-title { text-align: center; min-width: 0; }
 .game-title > b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 18px; }
@@ -1010,7 +1012,9 @@ label { font-size: 12px; font-weight: 900; color: var(--ink-soft); display: bloc
 .game-legend span { padding: 9px 10px; border: 1px solid var(--line); border-radius: 11px; background: var(--card); font-size: 12px; }
 .game-legend b { float: right; }
 .game-actions-panel .actions { display: grid; grid-template-columns: 1fr 1fr; margin: 0; }
+.game-actions-panel .play-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .game-actions-panel .play-actions .good { grid-column: 1 / -1; padding-block: 14px; }
+.best-btn:not(:disabled) { color: color-mix(in srgb, var(--gold) 72%, var(--ink)); background: color-mix(in srgb, var(--gold) 18%, var(--btn-bg)); }
 .game-actions-panel .review-bar { grid-template-columns: 1fr; }
 .game-actions-panel .review-bar .btn { width: 100%; }
 .shortcut-note { text-align: center; margin-top: 10px; }
@@ -1048,7 +1052,7 @@ kbd { padding: 2px 5px; border-radius: 5px; border: 1px solid var(--line); backg
     backdrop-filter: blur(16px) saturate(140%);
     box-shadow: 0 14px 38px #15200f42;
   }
-  .game-actions-panel .actions { grid-template-columns: .8fr .8fr 1.4fr; gap: 6px; }
+  .game-actions-panel .actions { grid-template-columns: .62fr .62fr .96fr 1.55fr; gap: 6px; }
   .game-actions-panel .play-actions .good { grid-column: auto; padding-block: 11px; }
   .game-actions-panel .play-actions .btn:only-child { grid-column: 1 / -1; }
   .game-actions-panel .review-bar { grid-template-columns: 1fr 1fr; }
@@ -1086,8 +1090,11 @@ kbd { padding: 2px 5px; border-radius: 5px; border: 1px solid var(--line); backg
   .game-title #game-sub { font-size: 10px; }
   #board { padding: 8px; gap: 3px; border-radius: 17px; }
   #tile-hint { display: none; }
-  .game-actions-panel .actions { grid-template-columns: .72fr .72fr 1.56fr; }
+  .game-actions-panel .actions { grid-template-columns: .62fr .62fr .96fr 1.55fr; }
   .game-actions-panel .btn { font-size: 11px; }
+  .game-topbar .game-prev { padding-inline: 2px; font-size: 10px; }
+  .game-topbar .prev-long { display: none; }
+  .game-topbar .prev-short { display: inline; }
   .game-actions-panel .review-bar { grid-template-columns: 1fr; }
   .tut-banner { padding: 12px; margin: 5px 0 9px; }
   .tut-banner .row { align-items: flex-start; flex-wrap: wrap; }

@@ -58,7 +58,8 @@ inlining the scripts would get them blocked and render a blank page. Edit
     after full renders. Taps/undo/reset go through `updateBoard()`; view changes and submit do full `render()`.
   - `localStorage` keys (all prefixed `purr_`): `settings`, `stats`, `history` (last 200 submissions),
     `campaign` (per-index `{score, stars}`), `daily_<n>` (result; `archived:true` for archive replays),
-    `dailycache`, `sol_<i>`, `friends`, `tutorialDone`.
+    `dailycache`, `sol_<i>`, `friends`, `tutorialDone`, and `draft_<level-id>` (latest fence layout plus
+    best valid enclosure for campaign, daily/archive, and community levels; guarded by a map signature).
 - **`style.css`** — design system with CSS variables, light+dark mode.
 - `newlevels*.js`, `sols*.json` — level-design workbenches (Node scripts using the solver). Keep for future level work.
 - There is also an **iOS SwiftUI prototype** (`Purrimeter.zip` / earlier work) — functional but far behind
@@ -95,6 +96,10 @@ inlining the scripts would get them blocked and render a blank page. Edit
 - **Optimal viewer** — after submit: "See optimal" shows the baked solution as golden fences; review bar
   toggles "View yours (N) / View optimal (M)", plus Results, **Keep improving** (unlocks board, keeps
   fences; hidden when already optimal / daily / tutorial), and **Next level**.
+- **Per-level memory** — every fence change is saved locally. Reopening a level resumes the unfinished
+  layout; every valid personal-best enclosure is saved before submission and can be restored with
+  **Best · N** (or the `B` key). Restore and Reset are both undoable. Campaign games also expose a
+  top-bar **Previous** control for quick comparison/revisiting.
 - **Results screen** — stars pop in, score breakdown ticks line-by-line (meadow tiles / yarn / tuna /
   cucumber), count-up total, share card, live community average, Next level.
 - **Leaderboards (Ranks)** — Global and Friends tabs both read **live server submissions**

@@ -90,6 +90,7 @@
     community: { top: null, new: null, mine: null }, // each: { items, hasMore } | null
     communityLoading: false,
     editor: null,               // level editor state (see ensureEditor)
+    memoryId: null,             // stable id for per-level current/best fence memory
     animKey: '',           // board entrance animation guard
     lastFence: null,       // only the newest fence pops
   };
@@ -189,6 +190,79 @@
   function isCampaignUnlocked(i, prog = store.get('campaign', {})) {
     return i <= campaignFrontier(prog) || !!(prog[i] && prog[i].stars);
   }
+
+  // ---------- per-level memory ----------
+  // Every real puzzle remembers both the latest layout and the best valid
+  // enclosure the player has discovered, even if they leave without submitting.
+  function levelSignature() {
+    return S.level ? `${S.level.walls}:${S.level.map.join('|')}` : '';
+  }
+  function draftKey() { return S.memoryId ? 'draft_' + S.memoryId : null; }
+  function legalFenceSet(values) {
+    const out = new Set();
+    if (!S.level || !Array.isArray(values)) return out;
+    for (const raw of values) {
+      const k = Number(raw), r = Math.floor(k / 100), c = k % 100;
+      if (!Number.isInteger(k) || !inB(S.level, r, c)) continue;
+      if (r === S.level.cat[0] && c === S.level.cat[1]) continue;
+      if (isBlockTerrain(cellCh(S.level, r, c))) continue;
+      if (out.size < S.level.walls) out.add(k);
+    }
+    return out;
+  }
+  function readDraft() {
+    const k = draftKey(); if (!k) return null;
+    const mem = store.get(k, null);
+    if (!mem || mem.signature !== levelSignature()) return null;
+    const current = legalFenceSet(mem.current);
+    let best = null;
+    if (mem.best && Array.isArray(mem.best.fences)) {
+      const fences = legalFenceSet(mem.best.fences);
+      const ev = evaluate(S.level, fences);
+      if (!ev.escaped) best = { score: ev.score, fences: [...fences], at: mem.best.at || 0 };
+    }
+    return { signature: mem.signature, current: [...current], best };
+  }
+  function sameFences(a, b) {
+    if (a.size !== b.size) return false;
+    for (const k of a) if (!b.has(k)) return false;
+    return true;
+  }
+  function rememberDraft({ announce = true } = {}) {
+    const k = draftKey(); if (!k || !S.level) return false;
+    const previous = readDraft();
+    const mem = previous || { signature: levelSignature(), current: [], best: null };
+    mem.current = [...S.fences].sort((a, b) => a - b);
+    const ev = evaluate(S.level, S.fences);
+    const improved = !ev.escaped && (!mem.best || ev.score > mem.best.score ||
+      (ev.score === mem.best.score && S.fences.size < mem.best.fences.length));
+    if (improved) mem.best = { score: ev.score, fences: [...S.fences].sort((a, b) => a - b), at: Date.now() };
+    store.set(k, mem);
+    if (improved && announce) toast(`🏅 Best saved · ${ev.score} pts`);
+    return improved;
+  }
+  function bestDraft() { return readDraft()?.best || null; }
+  function resumeDraft() {
+    const current = readDraft()?.current;
+    if (!current?.length) return false;
+    S.fences = legalFenceSet(current);
+    return S.fences.size > 0;
+  }
+  function restoreBest() {
+    const best = bestDraft(); if (!best || S.submitted) return;
+    const restored = legalFenceSet(best.fences);
+    if (sameFences(S.fences, restored)) return;
+    S.undo.push({ op: 'layout', fences: [...S.fences] });
+    S.fences = restored; S.lastFence = null; S.wasEnclosed = false;
+    rememberDraft({ announce: false }); updateBoard();
+    toast(`Restored your ${best.score}-point best`);
+  }
+  function clearLayout() {
+    if (!S.fences.size || S.submitted) return;
+    S.undo.push({ op: 'layout', fences: [...S.fences] });
+    S.fences = new Set(); S.lastFence = null; S.wasEnclosed = false;
+    rememberDraft({ announce: false }); updateBoard();
+  }
   function bumpStats(score, starsN, isDaily) {
     const st = stats();
     st.played++; if (starsN === 3) st.three++;
@@ -203,8 +277,9 @@
   // ---------- start games ----------
   function startCampaign(i) {
     if (!isCampaignUnlocked(i)) { toast('Clear the next garden to unlock this one.'); return; }
-    S.mode = 'campaign'; S.levelIndex = i; S.level = CAMPAIGN[i];
-    resetPlay(); S.view = 'game'; render();
+    S.mode = 'campaign'; S.levelIndex = i; S.level = CAMPAIGN[i]; S.memoryId = 'campaign_' + i;
+    const resumed = resetPlay({ resume: true }); S.view = 'game'; render();
+    if (resumed) toast('Your unfinished layout was restored');
   }
 
   // ---------- tutorial ----------
@@ -219,13 +294,13 @@
     { type: 'done', msg: 'A cozy 7-point meadow. Tap ✓ Submit to lock in your score!' },
   ];
   function startTutorial() {
-    S.mode = 'tutorial'; S.levelIndex = 0; S.level = CAMPAIGN[0];
+    S.mode = 'tutorial'; S.levelIndex = 0; S.level = CAMPAIGN[0]; S.memoryId = null;
     resetPlay(); S.tutStep = 0; S.view = 'game'; render();
   }
   const tutStep = () => S.mode === 'tutorial' && !S.submitted ? TUT_STEPS[S.tutStep] : null;
   function tutAdvance() { S.tutStep = Math.min(S.tutStep + 1, TUT_STEPS.length - 1); }
   async function startDaily() {
-    S.mode = 'daily';
+    S.mode = 'daily'; S.memoryId = 'daily_' + S.day;
     try {
       const online = await getOnlineDaily(S.day);
       S.level = online.lv;
@@ -234,10 +309,14 @@
       S.level = getDaily();
       toast('Offline daily preview. Connect to submit.');
     }
-    resetPlay();
+    const resumed = resetPlay({ resume: true });
     const r = dailyResult();
-    if (r) { S.submitted = true; S.result = r; S.fences = new Set(r.fences); S.showOverlay = true; }
+    if (r) {
+      S.fences = legalFenceSet(r.fences); rememberDraft({ announce: false });
+      S.submitted = true; S.result = r; S.showOverlay = true;
+    }
     S.view = 'game'; render();
+    if (resumed && !r) toast('Your unfinished layout was restored');
   }
   const dailySeed = day => day * 2654435761 % 2 ** 31;
   async function startArchive(day) {
@@ -257,16 +336,21 @@
       lv.name = 'Daily #' + day;
       toast('Offline archive preview. Connect to submit.');
     }
-    S.mode = 'archive'; S.archiveDay = day; S.level = lv;
-    resetPlay();
+    S.mode = 'archive'; S.archiveDay = day; S.level = lv; S.memoryId = 'daily_' + day;
+    const resumed = resetPlay({ resume: true });
     const r = dailyResult(day);
-    if (r) { S.submitted = true; S.result = r; S.fences = new Set(r.fences); S.showOverlay = true; }
+    if (r) {
+      S.fences = legalFenceSet(r.fences); rememberDraft({ announce: false });
+      S.submitted = true; S.result = r; S.showOverlay = true;
+    }
     S.view = 'game'; render();
+    if (resumed && !r) toast('Your unfinished layout was restored');
   }
-  function resetPlay() {
+  function resetPlay({ resume = false } = {}) {
     S.fences = new Set(); S.undo = []; S.submitted = false;
     S.result = null; S.showOverlay = false; S.review = 'mine'; S.lastFence = null;
     S.wasEnclosed = false;
+    return resume ? resumeDraft() : false;
   }
 
   // Fences currently displayed on the board (yours vs. optimal review)
@@ -295,6 +379,7 @@
       if (S.fences.size >= lv.walls) { nudgeHud(); return; }
       S.fences.add(k); S.undo.push({ op: 'add', k }); S.lastFence = k;
     }
+    rememberDraft();
     updateBoard();
   }
   function nudgeHud() {
@@ -316,8 +401,10 @@
   }
   function undo() {
     const u = S.undo.pop(); if (!u || S.submitted) return;
-    if (u.op === 'add') S.fences.delete(u.k); else S.fences.add(u.k);
-    S.lastFence = null; updateBoard();
+    if (u.op === 'layout') S.fences = legalFenceSet(u.fences);
+    else if (u.op === 'add') S.fences.delete(u.k);
+    else S.fences.add(u.k);
+    S.lastFence = null; S.wasEnclosed = false; rememberDraft({ announce: false }); updateBoard();
   }
   function scoreBreakdown(lv, ev) {
     let tiles = 0, ny = 0, nt = 0, nu = 0, boxes = 0;
@@ -336,6 +423,7 @@
   async function submit() {
     const ev = evaluate(S.level, S.fences);
     if (ev.escaped || S.submitted || S.submitting) return;
+    rememberDraft({ announce: false });
     if (S.mode === 'daily' || S.mode === 'archive') {
       S.submitting = true;
       const btn = $('#btn-submit');
@@ -733,6 +821,14 @@
     const left = $('#fence-left'); if (left && !S.submitted) left.textContent = lv.walls - S.fences.size;
     const undoB = $('#btn-undo'); if (undoB) undoB.disabled = !S.undo.length;
     const resetB = $('#btn-reset'); if (resetB) resetB.disabled = !S.fences.size;
+    const bestB = $('#btn-best');
+    if (bestB) {
+      const best = bestDraft();
+      const atBest = best && sameFences(S.fences, new Set(best.fences));
+      bestB.disabled = !best || atBest;
+      bestB.textContent = `↩ Best${best ? ` · ${best.score}` : ''}`;
+      bestB.title = best ? `Restore your ${best.score}-point best` : 'Your best valid enclosure saves automatically';
+    }
     const subB = $('#btn-submit');
     if (subB && !ctx.step) {
       subB.disabled = ev.escaped;
@@ -759,6 +855,8 @@
     const lv = S.level;
     const shown = displayedFences();
     const ev = evaluate(lv, shown);
+    const personalBest = bestDraft();
+    const atPersonalBest = personalBest && sameFences(S.fences, new Set(personalBest.fences));
     const optimalView = S.submitted && S.review === 'optimal';
     const step = tutStep();
     const status = statusHTML(ev, optimalView);
@@ -813,8 +911,13 @@
       <div class="actions play-actions">
         ${step ? '' : `<button class="btn" id="btn-undo" ${S.undo.length ? '' : 'disabled'}>↶ Undo</button>`}
         ${step ? '' : `<button class="btn" id="btn-reset" ${S.fences.size ? '' : 'disabled'}>↺ Reset</button>`}
+        ${step ? '' : `<button class="btn best-btn" id="btn-best" ${personalBest && !atPersonalBest ? '' : 'disabled'}
+          title="${personalBest ? `Restore your ${personalBest.score}-point best` : 'Your best valid enclosure saves automatically'}">↩ Best${personalBest ? ` · ${personalBest.score}` : ''}</button>`}
         <button class="btn good ${step && step.type === 'done' ? 'attn' : ''} ${!ev.escaped && !step ? 'ready' : ''}" id="btn-submit" ${ev.escaped || (step && step.type !== 'done') ? 'disabled' : ''}>✓ Submit meadow</button>
       </div>` : '';
+    const previousLevel = S.mode === 'campaign'
+      ? `<button class="btn ghost game-prev" id="btn-prev-level" aria-label="Previous level" ${S.levelIndex > 0 ? '' : 'disabled'}><span class="prev-long">← Previous level</span><span class="prev-short">← Prev</span></button>`
+      : '<span class="game-top-spacer" aria-hidden="true"></span>';
     return `
       <div class="game-shell">
       <header class="game-topbar">
@@ -824,7 +927,7 @@
         <div class="game-title"><span class="eyebrow">${S.mode === 'daily' ? 'Daily challenge' : S.mode === 'campaign' ? `Garden ${S.levelIndex + 1}` : S.mode}</span>
           <b>${S.mode === 'playtest' ? '▶ Playtest' : esc(step ? 'Tutorial' : lv.name)}</b>
           <div class="small soft" id="game-sub">${S.submitted ? `Optimal: ${lv.target} pts` : `${lv.walls - S.fences.size} of ${lv.walls} fences left`}</div></div>
-        <span class="game-top-spacer" aria-hidden="true"></span>
+        ${previousLevel}
       </header>
       ${tutBanner}
       <div class="game-layout">
@@ -840,7 +943,7 @@
         <aside class="game-actions-panel">
           <div class="game-legend" aria-label="Scoring legend"><span>🧶 <b>+3</b></span><span>🐟 <b>+10</b></span><span>🥒 <b>−5</b></span><span>📦 <b>warp</b></span></div>
           ${playActions}${reviewBar}
-          <div class="shortcut-note small soft">Desktop: <kbd>⌘Z</kbd> undo · <kbd>Enter</kbd> submit</div>
+          <div class="shortcut-note small soft">Desktop: <kbd>⌘Z</kbd> undo · <kbd>B</kbd> best · <kbd>Enter</kbd> submit</div>
         </aside>
       </div>
       </div>
@@ -945,9 +1048,10 @@
     on('#btn-exit-playtest', exitPlaytest);
     on('#btn-exit-playtest2', exitPlaytest);
     on('#btn-undo', undo);
+    on('#btn-best', restoreBest);
     on('#btn-submit', submit);
-    on('#btn-reset', () => { if (!(S.submitted && S.mode === 'daily')) { resetPlay(); updateBoard(); } });
-    on('#btn-retry', () => { resetPlay(); render(); });
+    on('#btn-reset', clearLayout);
+    on('#btn-retry', () => { resetPlay(); rememberDraft({ announce: false }); render(); });
     const keepImproving = () => {
       // keep the fences on the board, unlock editing, and let them refine
       S.submitted = false; S.result = null; S.showOverlay = false; S.review = 'mine';
@@ -957,6 +1061,7 @@
     on('#btn-continue-bar', keepImproving);
     on('#btn-next', () => startCampaign(S.levelIndex + 1));
     on('#btn-next-bar', () => startCampaign(S.levelIndex + 1));
+    on('#btn-prev-level', () => startCampaign(S.levelIndex - 1));
     on('#btn-share', doShare);
     on('#btn-close-overlay', () => { S.showOverlay = false; render(); });
     on('#btn-results', () => { S.showOverlay = true; S.review = 'mine'; render(); });
@@ -1329,7 +1434,7 @@
     // Keep Check/Publish in sync with what the playtest validated.
     if (res.target >= 8) { e.target = res.target; e.solution = [...res.solution]; e.error = null; }
     else { e.target = null; e.error = `best solution is only ${res.target} pts — make it worth at least 8`; }
-    S.mode = 'playtest';
+    S.mode = 'playtest'; S.memoryId = null;
     S.level = res;
     resetPlay();
     S.view = 'game';
@@ -1374,7 +1479,9 @@
     const lv = parseLevel(l.def);
     lv.name = l.name;
     lv.target = l.target;
-    S.mode = 'community'; S.level = lv; resetPlay(); S.view = 'game'; render();
+    S.mode = 'community'; S.level = lv; S.memoryId = 'community_' + l.id;
+    const resumed = resetPlay({ resume: true }); S.view = 'game'; render();
+    if (resumed) toast('Your unfinished layout was restored');
     apiFetch(`/api/community/levels/${l.id}/play`, { method: 'POST', body: '{}' }).catch(() => {});
   }
   async function publishEditor() {
@@ -1527,6 +1634,7 @@
     if (e.target && /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(e.target.tagName)) return;
     if (S.view !== 'game') return;
     if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); undo(); return; }
+    if ((e.key === 'b' || e.key === 'B') && !S.submitted) { e.preventDefault(); restoreBest(); return; }
     if (e.key === 'Escape' && S.showOverlay) { S.showOverlay = false; render(); return; }
     if (e.key === 'Enter' && !S.submitted) {
       const b = $('#btn-submit');
