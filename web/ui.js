@@ -203,7 +203,7 @@
     return i < 0 ? CAMPAIGN.length - 1 : i;
   }
   function isCampaignUnlocked(i, prog = campaignProgress()) {
-    return i <= campaignFrontier(prog) || !!(prog[CAMPAIGN[i].name] && prog[CAMPAIGN[i].name].stars);
+    return campaignLevelUnlocked(CAMPAIGN, i, prog);
   }
 
   // ---------- per-level memory ----------

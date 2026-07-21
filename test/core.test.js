@@ -56,6 +56,15 @@ test('campaign names are unique and late-game mechanics matter to their solution
     'Grand Garden should avoid its cucumber shortcut');
 });
 
+test('clearing a migrated campaign level unlocks its immediate successor', () => {
+  const levels = [{ name: 'Inserted Garden' }, { name: 'Tuna Lock' }, { name: 'Stepping Stones' }, { name: 'Later' }];
+  const progress = { 'Tuna Lock': { score: 30, stars: 3 } };
+  assert.ok(core.campaignLevelUnlocked(levels, 2, progress),
+    'Next level should open after the currently cleared garden even when an inserted level is still uncleared');
+  assert.equal(core.campaignLevelUnlocked(levels, 3, progress), false,
+    'clearing one garden should not unlock non-adjacent later levels');
+});
+
 test('the cat escapes an open garden (no fences) on level 1', () => {
   const lv = core.parseLevel(core.CAMPAIGN[0]);
   const ev = core.evaluate(lv, new Set());

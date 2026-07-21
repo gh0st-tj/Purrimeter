@@ -27,6 +27,19 @@ function parseLevel(def) {
   return { ...def, rows, cols, cat, pairs };
 }
 
+// A cleared garden always opens its immediate successor. The previous-level
+// check matters when a campaign update inserts new levels before a player's
+// existing progress: old completions remain usable without skipping the new
+// gardens or blocking the Next level button.
+function campaignLevelUnlocked(levels, i, progress) {
+  if (!Array.isArray(levels) || !Number.isInteger(i) || i < 0 || i >= levels.length) return false;
+  const firstUncleared = levels.findIndex(lv => !(progress[lv.name] && progress[lv.name].stars));
+  const frontier = firstUncleared < 0 ? levels.length - 1 : firstUncleared;
+  return i <= frontier
+    || !!(progress[levels[i].name] && progress[levels[i].name].stars)
+    || !!(i > 0 && progress[levels[i - 1].name] && progress[levels[i - 1].name].stars);
+}
+
 const key = (r, c) => r * 100 + c;
 const cellCh = (lv, r, c) => (lv.map[r][c] === 'C' ? '.' : lv.map[r][c]);
 const isBlockTerrain = ch => ch === '~' || ch === '#';
@@ -487,5 +500,5 @@ function validateAiLevel(obj) {
 
 // Node export for testing
 if (typeof module !== 'undefined') {
-  module.exports = { parseLevel, evaluate, solve, generateLevel, dayNumber, CAMPAIGN, shareText, friendCode, parseFriendCode, dailyBots, validateAiLevel, key, cellCh, mulberry32, AI_PROMPT, EPOCH_UTC, levelEmojiGrid };
+  module.exports = { parseLevel, evaluate, solve, generateLevel, dayNumber, CAMPAIGN, shareText, friendCode, parseFriendCode, dailyBots, validateAiLevel, key, cellCh, mulberry32, AI_PROMPT, EPOCH_UTC, levelEmojiGrid, campaignLevelUnlocked };
 }
