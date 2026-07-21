@@ -938,10 +938,20 @@
         <section class="board-column" aria-label="Puzzle board">
           <div id="board-wrap" class="${step && step.type === 'info' && S.fences.size === 0 ? 'tut-wait' : ''}"><div id="board" role="group" aria-label="Puzzle grid" style="--ts:${ts}px;--cols:${lv.cols}">${tiles}</div></div>
           <div id="tile-hint" class="center" aria-live="polite"> </div>
+          <section class="meadow-guide" aria-label="Meadow scoring guide">
+            <span class="meadow-guide-title">Meadow guide</span>
+            <div class="meadow-guide-items">
+              <span title="Every enclosed grass tile is worth 1 point">🌱 Grass <b>+1</b></span>
+              <span title="Yarn is worth 3 points when enclosed">🧶 Yarn <b>+3</b></span>
+              <span title="Tuna is worth 10 points when enclosed">🐟 Tuna <b>+10</b></span>
+              <span title="Cucumber costs 5 points when enclosed">🥒 Cucumber <b>−5</b></span>
+              <span title="Matching boxes teleport Mochi between them">📦 Box <b>warp</b></span>
+              <span title="Ponds and rocks block Mochi, so they act as free walls">🌊🪨 <b>free walls</b></span>
+            </div>
+          </section>
           ${optimalView ? '<div class="center small soft optimal-note">✨ Best-known solution found by the solver</div>' : ''}
         </section>
         <aside class="game-actions-panel">
-          <div class="game-legend" aria-label="Scoring legend"><span>🧶 <b>+3</b></span><span>🐟 <b>+10</b></span><span>🥒 <b>−5</b></span><span>📦 <b>warp</b></span></div>
           ${playActions}${reviewBar}
           <div class="shortcut-note small soft">Desktop: <kbd>⌘Z</kbd> undo · <kbd>B</kbd> best · <kbd>Enter</kbd> submit</div>
         </aside>

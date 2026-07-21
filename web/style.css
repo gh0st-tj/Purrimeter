@@ -1003,14 +1003,36 @@ label { font-size: 12px; font-weight: 900; color: var(--ink-soft); display: bloc
 .game-status { display: grid; gap: 5px; }
 #status { font-size: 17px; }
 .status-note { color: var(--ink-soft); font-size: 11px; font-weight: 750; line-height: 1.35; }
-.game-legend {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-  margin-bottom: 10px;
+.meadow-guide {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--card) 88%, transparent);
 }
-.game-legend span { padding: 9px 10px; border: 1px solid var(--line); border-radius: 11px; background: var(--card); font-size: 12px; }
-.game-legend b { float: right; }
+.meadow-guide-title {
+  display: block;
+  margin: 0 0 7px;
+  color: var(--ink-soft);
+  font-size: 9px;
+  font-weight: 950;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.meadow-guide-items { display: flex; flex-wrap: wrap; gap: 6px; }
+.meadow-guide-items span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 7px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--card-strong) 78%, transparent);
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1;
+  white-space: nowrap;
+}
+.meadow-guide-items b { color: var(--ink); font-weight: 950; }
 .game-actions-panel .actions { display: grid; grid-template-columns: 1fr 1fr; margin: 0; }
 .game-actions-panel .play-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .game-actions-panel .play-actions .good { grid-column: 1 / -1; padding-block: 14px; }
@@ -1038,7 +1060,6 @@ kbd { padding: 2px 5px; border-radius: 5px; border: 1px solid var(--line); backg
   .game-status { padding: 11px 14px; align-content: center; }
   #status { font-size: 14px; }
   .status-note { font-size: 10px; }
-  .game-legend { display: none; }
   .shortcut-note { display: none; }
   .game-actions-panel {
     position: sticky;
@@ -1090,6 +1111,10 @@ kbd { padding: 2px 5px; border-radius: 5px; border: 1px solid var(--line); backg
   .game-title #game-sub { font-size: 10px; }
   #board { padding: 8px; gap: 3px; border-radius: 17px; }
   #tile-hint { display: none; }
+  .meadow-guide { margin-top: 8px; padding: 9px 10px; }
+  .meadow-guide-title { margin-bottom: 6px; }
+  .meadow-guide-items { gap: 5px; }
+  .meadow-guide-items span { padding: 5px 6px; font-size: 10px; }
   .game-actions-panel .actions { grid-template-columns: .62fr .62fr .96fr 1.55fr; }
   .game-actions-panel .btn { font-size: 11px; }
   .game-topbar .game-prev { padding-inline: 2px; font-size: 10px; }
