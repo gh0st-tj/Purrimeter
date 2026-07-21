@@ -41,8 +41,8 @@ inlining the scripts would get them blocked and render a blank page. Edit
   - `generateLevel(seed)` — deterministic procedural generator (pond blobs, rocks, items, quality gate:
     solvable, target ≥ 12, at least one special inside the optimum). Attaches `target` and `solution`.
   - `dayNumber()` — daily index; epoch is `Date.UTC(2026, 6, 1)` = Daily #1. Daily seed = `day * 2654435761 % 2**31`.
-  - `CAMPAIGN` — **31 hand-crafted levels** ordered as a teaching curve (pond → diagonal-safety → rock →
-    yarn → cucumber → tuna → portal, then steadily rising targets 7→43), each with `walls`, `target`, and a
+  - `CAMPAIGN` — **35 hand-crafted levels** ordered as a teaching curve (pond → diagonal-safety → rock →
+    yarn → cucumber → tuna → portal, then advanced terrain/portal optimization with targets up to 63), each with `walls`, `target`, and a
     **baked `solution`** (array of cell keys) verified to reproduce the target exactly. Never ship a level whose solution doesn't
     replay to its stated target.
   - Share: `shareText()` produces a **spoiler-safe** card (terrain+items emoji grid, NO fences/enclosure)
@@ -57,7 +57,7 @@ inlining the scripts would get them blocked and render a blank page. Edit
     (water shimmer, item wobble, wheat) never restart on unrelated tiles. `primeBoard()` seeds the cache
     after full renders. Taps/undo/reset go through `updateBoard()`; view changes and submit do full `render()`.
   - `localStorage` keys (all prefixed `purr_`): `settings`, `stats`, `history` (last 200 submissions),
-    `campaign` (per-index `{score, stars}`), `daily_<n>` (result; `archived:true` for archive replays),
+    `campaignByName` (per-level `{score, stars}`; migrated from legacy index-based `campaign`), `daily_<n>` (result; `archived:true` for archive replays),
     `dailycache`, `sol_<i>`, `friends`, `tutorialDone`, and `draft_<level-id>` (latest fence layout plus
     best valid enclosure for campaign, daily/archive, and community levels; guarded by a map signature).
 - **`style.css`** — design system with CSS variables, light+dark mode.
@@ -69,11 +69,11 @@ inlining the scripts would get them blocked and render a blank page. Edit
 
 - **Tutorial** — auto-launches for new players (`tutorialDone` flag); scripted steps with a glowing target
   tile; only the scripted tile is tappable; replayable from home.
-- **Campaign** — 31 levels on a winding "Campaign Trail" (SVG path, card nodes with icon/state/stars,
+- **Campaign** — 35 levels on a winding "Campaign Trail" (SVG path, card nodes with icon/state/stars,
   progress bar). **Levels lock**: you must clear (≥1 star) level N to open N+1. Order is a deliberate
   difficulty curve: basics → mechanic lessons placed next to the mechanic they teach (Cucumber Shield after
   Cucumber Patch, Box Blocker after Box Magic, Great Wall = plug-pushing lesson) → mixed mid-game → open
-  optimization boards (26→41 targets) → Grand Garden finale (43).
+  optimization boards → four Secret Gardens with unusual shapes and multi-portal choices → rebuilt Grand Garden finale (63).
 - **Daily Challenge** — deterministic per-day level, identical for everyone; **one submission** (locked after);
   Wordle-style. Result stored per day; feeds streaks.
 - **Daily Archive** — last 60 dailies listed with dates/results; freely replayable; keeps best score; never

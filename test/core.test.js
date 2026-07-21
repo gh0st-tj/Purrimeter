@@ -30,6 +30,32 @@ test('every campaign level is enclosed by its baked solution and hits its target
   }
 });
 
+test('campaign names are unique and late-game mechanics matter to their solutions', () => {
+  const byName = new Map(core.CAMPAIGN.map(lv => [lv.name, lv]));
+  assert.equal(byName.size, core.CAMPAIGN.length, 'campaign progress is keyed by unique level name');
+
+  const inside = name => {
+    const lv = byName.get(name);
+    const ev = core.evaluate(lv, new Set(lv.solution));
+    return [...ev.reachable].map(k => core.cellCh(lv, Math.floor(k / 100), k % 100));
+  };
+  const crown = byName.get('Cucumber Crown');
+  assert.ok(crown.solution.some(k => core.cellCh(crown, Math.floor(k / 100), k % 100) === 'u'),
+    'Cucumber Crown should reward fencing on a cucumber');
+  assert.equal(inside('Pantry Portal').filter(ch => ch === '1').length, 2,
+    'Pantry Portal should use both ends of its portal');
+  assert.equal(inside('Three Wishes').filter(ch => ch >= '1' && ch <= '3').length, 4,
+    'Three Wishes should make the optimum choose two of three portal pairs');
+  assert.equal(byName.get('Diamond District').solution.length, 1,
+    'Diamond District should keep its one-fence reveal');
+  assert.equal(inside('Grand Garden').filter(ch => ch === '1').length, 2,
+    'Grand Garden should use its portal pair');
+  assert.equal(inside('Grand Garden').filter(ch => ch === 't').length, 2,
+    'Grand Garden should claim both tuna rewards');
+  assert.equal(inside('Grand Garden').filter(ch => ch === 'u').length, 0,
+    'Grand Garden should avoid its cucumber shortcut');
+});
+
 test('the cat escapes an open garden (no fences) on level 1', () => {
   const lv = core.parseLevel(core.CAMPAIGN[0]);
   const ev = core.evaluate(lv, new Set());

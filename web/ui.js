@@ -183,12 +183,27 @@
 
   // ---------- stats ----------
   function stats() { return store.get('stats', { played: 0, three: 0, streak: 0, lastDay: 0, bestScore: 0 }); }
-  function campaignFrontier(prog = store.get('campaign', {})) {
-    const i = CAMPAIGN.findIndex((_, idx) => !(prog[idx] && prog[idx].stars));
+  const LEGACY_CAMPAIGN_NAMES = [
+    'Cozy Corner', 'Stretch Out', 'Yarn Day', 'Boulders', 'Cucumber Shield', 'Cucumber Patch', 'Tuna Heist',
+    'Box Magic', 'Box Blocker', 'Twin Ponds', 'Garden Party', 'The Moat', 'Fork in the Road', 'The Corridor',
+    'Double Trouble', 'Bridge Toll', 'Secret Tunnel', 'Riverbend', 'Clover Field', 'Sunny Acres', 'Tuna Lock',
+    'Stepping Stones', 'Rock Maze', 'Meadow Sprawl', 'Ribbon Canal', 'Winding Water', 'Marsh Mirage',
+    'Split Pantry', 'Hidden Picnic', 'The Great Wall', 'Grand Garden',
+  ];
+  function campaignProgress() {
+    const saved = store.get('campaignByName', null);
+    if (saved) return saved;
+    const legacy = store.get('campaign', {}), migrated = {};
+    LEGACY_CAMPAIGN_NAMES.forEach((name, i) => { if (legacy[i]) migrated[name] = legacy[i]; });
+    store.set('campaignByName', migrated);
+    return migrated;
+  }
+  function campaignFrontier(prog = campaignProgress()) {
+    const i = CAMPAIGN.findIndex(lv => !(prog[lv.name] && prog[lv.name].stars));
     return i < 0 ? CAMPAIGN.length - 1 : i;
   }
-  function isCampaignUnlocked(i, prog = store.get('campaign', {})) {
-    return i <= campaignFrontier(prog) || !!(prog[i] && prog[i].stars);
+  function isCampaignUnlocked(i, prog = campaignProgress()) {
+    return i <= campaignFrontier(prog) || !!(prog[CAMPAIGN[i].name] && prog[CAMPAIGN[i].name].stars);
   }
 
   // ---------- per-level memory ----------
@@ -489,10 +504,10 @@
       if (!prev || ev.score > prev.score) store.set('daily_' + S.archiveDay, { ...S.result, archived: true });
     }
     if (S.mode === 'campaign' || S.mode === 'tutorial') {
-      const prog = store.get('campaign', {});
-      const p = prog[S.levelIndex] || { score: 0, stars: 0 };
-      prog[S.levelIndex] = { score: Math.max(p.score, ev.score), stars: Math.max(p.stars, starsN) };
-      store.set('campaign', prog);
+      const prog = campaignProgress();
+      const p = prog[S.level.name] || { score: 0, stars: 0 };
+      prog[S.level.name] = { score: Math.max(p.score, ev.score), stars: Math.max(p.stars, starsN) };
+      store.set('campaignByName', prog);
     }
     if (starsN === 3) confetti();
     render();
@@ -598,10 +613,10 @@
   // --- home ---
   function renderHome() {
     const st = stats();
-    const prog = store.get('campaign', {});
+    const prog = campaignProgress();
     const dr = dailyResult();
-    const beaten = CAMPAIGN.filter((_, i) => prog[i] && prog[i].stars).length;
-    const totalStars = CAMPAIGN.reduce((sum, _, i) => sum + ((prog[i] && prog[i].stars) || 0), 0);
+    const beaten = CAMPAIGN.filter(lv => prog[lv.name] && prog[lv.name].stars).length;
+    const totalStars = CAMPAIGN.reduce((sum, lv) => sum + ((prog[lv.name] && prog[lv.name].stars) || 0), 0);
     const frontier = campaignFrontier(prog);
     const levelIcon = lv => {
       const flat = lv.map.join('');
@@ -632,10 +647,11 @@
       { name: 'First Paws', note: 'Learn to close a clean perimeter', from: 0, to: 6 },
       { name: 'Garden Tricks', note: 'Bonuses, hazards, and smart shortcuts', from: 7, to: 14 },
       { name: 'Wild Meadows', note: 'Mixed terrain with tighter budgets', from: 15, to: 22 },
-      { name: 'Master Grounds', note: 'Open-ended optimization puzzles', from: 23, to: CAMPAIGN.length - 1 },
+      { name: 'Master Grounds', note: 'Open-ended optimization puzzles', from: 23, to: 30 },
+      { name: 'Secret Gardens', note: 'Strange shapes and expert-level twists', from: 31, to: CAMPAIGN.length - 1 },
     ];
     const levelButton = (lv, i) => {
-      const p = prog[i] || { stars: 0, score: 0 };
+      const p = prog[lv.name] || { stars: 0, score: 0 };
       const done = p.stars > 0;
       const unlocked = isCampaignUnlocked(i, prog);
       const current = i === frontier;
@@ -650,7 +666,7 @@
     };
     const chapterHtml = chapters.map(ch => {
       const levels = CAMPAIGN.slice(ch.from, ch.to + 1).map((lv, offset) => levelButton(lv, ch.from + offset)).join('');
-      const cleared = CAMPAIGN.slice(ch.from, ch.to + 1).filter((_, offset) => prog[ch.from + offset]?.stars).length;
+      const cleared = CAMPAIGN.slice(ch.from, ch.to + 1).filter(lv => prog[lv.name]?.stars).length;
       const isCurrent = frontier >= ch.from && frontier <= ch.to;
       const isOpen = window.innerWidth >= 860 || isCurrent;
       return `<details class="campaign-chapter ${isCurrent ? 'current' : ''}" ${isOpen ? 'open' : ''}>
