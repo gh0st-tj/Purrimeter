@@ -299,14 +299,38 @@
 
   // ---------- tutorial ----------
   const TUT_STEPS = [
-    { type: 'info', msg: 'Meet Mochi 🐈 — she wanders ⬆️⬇️⬅️➡️ (never diagonally). If she can reach the edge of the garden, she escapes!' },
-    { type: 'info', msg: 'Your job: trap her in the biggest possible meadow. The pond blocks her for free — cats hate water — so only the open side needs fences.' },
-    { type: 'fence', cell: [1, 4], msg: 'Tap the glowing tile to place your first fence.' },
-    { type: 'fence', cell: [2, 4], msg: 'Nice! Keep building the wall downward.' },
-    { type: 'fence', cell: [3, 3], msg: 'Step it inward diagonally — diagonal gaps are safe, Mochi can’t cut corners!' },
-    { type: 'fence', cell: [4, 2], msg: 'One more to seal the meadow.' },
-    { type: 'info', msg: 'She’s enclosed! The glowing tiles are her meadow — each one is a point. In later gardens: 🧶+3 · 🐟+10 · 🥒−5.' },
-    { type: 'done', msg: 'A cozy 7-point meadow. Tap ✓ Submit to lock in your score!' },
+    {
+      type: 'info', icon: '🐈', label: 'Welcome', title: 'Keep Mochi cozy', action: 'Show me how',
+      msg: 'Build a fence around Mochi before she finds a path to the edge. A larger safe meadow earns a better score.',
+    },
+    {
+      type: 'info', icon: '↕️', label: 'How Mochi moves', title: 'Watch the open paths', action: 'Let’s build',
+      msg: 'Mochi moves up, down, left, or right — never diagonally. Ponds and rocks already block her, so they work like free walls.',
+    },
+    {
+      type: 'fence', icon: '🚧', label: 'Your turn', title: 'Close the open side', cue: 'Tap the glowing grass tile', cell: [1, 4],
+      msg: 'The pond protects most of this meadow. Start a short fence along its open edge.',
+    },
+    {
+      type: 'fence', icon: '🪵', label: 'Nice placement', title: 'Continue the wall', cue: 'Tap the next glowing tile', cell: [2, 4],
+      msg: 'Each placement uses one fence from your budget. Continue downward to cut off the escape route.',
+    },
+    {
+      type: 'fence', icon: '↘️', label: 'Smart shortcut', title: 'Diagonal gaps are safe', cue: 'Step the wall inward', cell: [3, 3],
+      msg: 'Mochi cannot move diagonally, so fence posts may touch at the corners without leaving an escape route.',
+    },
+    {
+      type: 'fence', icon: '✨', label: 'Almost there', title: 'Seal the meadow', cue: 'Place the final fence', cell: [4, 2],
+      msg: 'One last post connects your fence to the pond and closes every route to the edge.',
+    },
+    {
+      type: 'info', icon: '🌾', label: 'Meadow secured', title: 'Read your score', action: 'One last thing',
+      msg: 'The golden tiles show Mochi’s safe meadow. Grass is worth +1; later gardens add yarn +3, tuna +10, and cucumber −5.',
+    },
+    {
+      type: 'done', icon: '✓', label: 'Ready to finish', title: 'Lock in your meadow', cue: 'Tap “Submit meadow” below',
+      msg: 'Submitting ends the garden and reveals your result. You can compare it with the best-known solution afterward.',
+    },
   ];
   function startTutorial() {
     S.mode = 'tutorial'; S.levelIndex = 0; S.level = CAMPAIGN[0]; S.memoryId = null;
@@ -314,6 +338,22 @@
   }
   const tutStep = () => S.mode === 'tutorial' && !S.submitted ? TUT_STEPS[S.tutStep] : null;
   function tutAdvance() { S.tutStep = Math.min(S.tutStep + 1, TUT_STEPS.length - 1); }
+  function setTutorialStep(next) {
+    S.tutStep = Math.max(0, Math.min(next, TUT_STEPS.length - 1));
+    // Rebuild the scripted placements so Back is safe at every point in the lesson.
+    const placed = TUT_STEPS.slice(0, S.tutStep).filter(s => s.type === 'fence');
+    S.fences = new Set(placed.map(s => key(s.cell[0], s.cell[1])));
+    const last = placed[placed.length - 1];
+    S.lastFence = last ? key(last.cell[0], last.cell[1]) : null;
+    S.wasEnclosed = false;
+    render();
+  }
+  function skipTutorial() {
+    store.set('tutorialDone', true);
+    S.view = 'home';
+    render();
+    toast('Tutorial skipped — replay it anytime from How to play');
+  }
   async function startDaily() {
     S.mode = 'daily'; S.memoryId = 'daily_' + S.day;
     try {
@@ -405,14 +445,14 @@
   function nudgeTut() {
     const b = $('#tut-banner');
     if (b) { b.style.animation = 'none'; void b.offsetWidth; b.style.animation = 'tutNudge .45s'; }
-    toast('👆 Read the tip, then tap “Got it”');
+    toast('Use the button in the guide to continue');
   }
   // Tutorial: the player tapped a non-target tile during a fence step.
   function nudgeHintTile() {
     const t = document.querySelector('#board .tile.hint');
     if (!t) return;
     t.classList.remove('tap-wrong'); void t.offsetWidth; t.classList.add('tap-wrong');
-    toast('👆 Tap the glowing tile');
+    toast('Look for the glowing grass tile');
   }
   function undo() {
     const u = S.undo.pop(); if (!u || S.submitted) return;
@@ -593,9 +633,11 @@
     if (!pill) {
       pill = document.createElement('div');
       pill.id = 'conn-pill';
-      pill.textContent = '⚠️ Offline — playing locally, scores won’t sync';
       document.body.appendChild(pill);
     }
+    const compact = S.view === 'game' && S.mode === 'tutorial';
+    pill.classList.toggle('tutorial-conn', compact);
+    pill.textContent = compact ? '⚠️ Offline' : '⚠️ Offline — playing locally, scores won’t sync';
   }
 
   function navBar() {
@@ -897,17 +939,30 @@
       tiles += `<button type="button" class="${cls}" data-r="${r}" data-c="${c}"${infoAttr}
         aria-label="${esc(t.label)}" aria-pressed="${t.fenced}" aria-disabled="${t.disabled}" tabindex="${tabStop ? 0 : -1}" style="${delay}">${t.inner}</button>`;
     }
-    const tutDots = TUT_STEPS.map((_, i) =>
-      `<span class="${i < S.tutStep ? 'done' : i === S.tutStep ? 'on' : ''}"></span>`).join('');
+    const tutProgress = Math.round(((S.tutStep + 1) / TUT_STEPS.length) * 100);
     const tutBanner = step ? `
-      <div class="card tut-banner" id="tut-banner">
-        <div class="row">
-          <div class="tut-icon">🎓</div>
-          <div class="grow tut-msg">${esc(step.msg)}</div>
-          ${step.type === 'info' ? '<button class="btn primary attn" id="tut-next">Got it</button>' : ''}
+      <section class="card tut-banner tut-${step.type}" id="tut-banner" role="region" aria-labelledby="tut-title" aria-live="polite">
+        <div class="tut-progress-row">
+          <span>${esc(step.label)}</span>
+          <span>Step ${S.tutStep + 1} of ${TUT_STEPS.length}</span>
         </div>
-        <div class="tut-dots">${tutDots}</div>
-      </div>` : '';
+        <div class="tut-progress" role="progressbar" aria-label="Tutorial progress" aria-valuemin="1" aria-valuemax="${TUT_STEPS.length}" aria-valuenow="${S.tutStep + 1}">
+          <span style="width:${tutProgress}%"></span>
+        </div>
+        <div class="tut-coach">
+          <div class="tut-icon" aria-hidden="true">${step.icon}</div>
+          <div class="tut-copy">
+            <h2 id="tut-title">${esc(step.title)}</h2>
+            <p id="tut-instruction">${esc(step.msg)}</p>
+          </div>
+        </div>
+        <div class="tut-footer">
+          ${S.tutStep > 0 ? '<button class="btn ghost tut-back" id="tut-back">← Back</button>' : '<span></span>'}
+          ${step.type === 'info'
+            ? `<button class="btn primary attn" id="tut-next">${esc(step.action)} →</button>`
+            : `<span class="tut-cue ${step.type === 'done' ? 'success' : ''}">${step.type === 'done' ? '✓' : '☝️'} ${esc(step.cue)}</span>`}
+        </div>
+      </section>` : '';
     const overlay = S.submitted && S.showOverlay ? renderResultOverlay() : '';
     const nextInBar = (S.mode === 'campaign' || S.mode === 'tutorial') && S.levelIndex < CAMPAIGN.length - 1
       ? '<button class="btn primary" id="btn-next-bar">Next level ▶</button>' : '';
@@ -939,7 +994,9 @@
       <header class="game-topbar">
         ${S.mode === 'playtest'
           ? '<button class="btn ghost" id="btn-exit-playtest">← Editor</button>'
-          : `<button class="btn ghost" data-nav="home">← ${step ? 'Skip' : 'Back'}</button>`}
+          : step
+            ? '<button class="btn ghost tut-skip" id="btn-skip-tutorial" aria-label="Skip tutorial"><span class="skip-long">Skip tutorial</span><span class="skip-short">Skip</span></button>'
+            : '<button class="btn ghost" data-nav="home">← Back</button>'}
         <div class="game-title"><span class="eyebrow">${S.mode === 'daily' ? 'Daily challenge' : S.mode === 'campaign' ? `Garden ${S.levelIndex + 1}` : S.mode}</span>
           <b>${S.mode === 'playtest' ? '▶ Playtest' : esc(step ? 'Tutorial' : lv.name)}</b>
           <div class="small soft" id="game-sub">${S.submitted ? `Optimal: ${lv.target} pts` : `${lv.walls - S.fences.size} of ${lv.walls} fences left`}</div></div>
@@ -951,7 +1008,7 @@
           <div class="fence-budget"><span class="eyebrow">Fence budget</span><strong><span id="fence-left">${Math.max(0, lv.walls - shown.size)}</span><small> left</small></strong><div class="pips">${pips}</div></div>
           <div class="game-status">${status}<span class="status-note">${ev.escaped ? 'Close every route to the edge' : 'The highlighted meadow is secure'}</span></div>
         </div>
-        <section class="board-column" aria-label="Puzzle board">
+        <section class="board-column" aria-label="Puzzle board"${step ? ' aria-describedby="tut-instruction"' : ''}>
           <div id="board-wrap" class="${step && step.type === 'info' && S.fences.size === 0 ? 'tut-wait' : ''}"><div id="board" role="group" aria-label="Puzzle grid" style="--ts:${ts}px;--cols:${lv.cols}">${tiles}</div></div>
           <div id="tile-hint" class="center" aria-live="polite"> </div>
           <section class="meadow-guide" aria-label="Meadow scoring guide">
@@ -976,6 +1033,7 @@
       ${overlay}${navBar()}`;
   }
   function renderResultOverlay() {
+    if (S.mode === 'tutorial') return renderTutorialComplete();
     const r = S.result;
     const perfect = r.score >= S.level.target;
     const share = currentShare();
@@ -1021,7 +1079,31 @@
       </div>
     </div></div>`;
   }
+  function renderTutorialComplete() {
+    return `<div id="overlay"><div class="card center tutorial-complete" role="dialog" aria-modal="true" aria-labelledby="tutorial-complete-title">
+      <div class="tutorial-complete-icon" aria-hidden="true">🐾</div>
+      <div class="eyebrow">Tutorial complete</div>
+      <h2 id="tutorial-complete-title">You’re ready to roam!</h2>
+      <p class="soft">You secured Mochi’s first meadow and learned everything needed to start the campaign.</p>
+      <div class="tutorial-lessons" aria-label="What you learned">
+        <span><b>🚧 Block</b><small>every path out</small></span>
+        <span><b>🌊 Connect</b><small>to free walls</small></span>
+        <span><b>🌾 Grow</b><small>a high-score meadow</small></span>
+      </div>
+      <div class="tutorial-score"><span>First meadow</span><b>${S.result.score} points · ${'★'.repeat(S.result.stars)}</b></div>
+      <div class="actions tutorial-complete-actions">
+        <button class="btn primary" id="btn-next">Start Garden 2 →</button>
+        <button class="btn" id="btn-tutorial-replay">Replay tutorial</button>
+        <button class="btn ghost" data-nav="home">Back home</button>
+      </div>
+    </div></div>`;
+  }
   function animateOverlay() {
+    const dialog = $('#overlay [role="dialog"]');
+    if (dialog) {
+      dialog.tabIndex = -1;
+      requestAnimationFrame(() => dialog.focus({ preventScroll: true }));
+    }
     const el = $('#score-count');
     if (!el || !S.result) return;
     const lines = (S.result.breakdown || []).length;
@@ -1070,7 +1152,9 @@
     });
     board.addEventListener('mouseleave', () => { if (hint) hint.textContent = ' '; });
     const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
-    on('#tut-next', () => { tutAdvance(); render(); });
+    on('#tut-next', () => setTutorialStep(S.tutStep + 1));
+    on('#tut-back', () => setTutorialStep(S.tutStep - 1));
+    on('#btn-skip-tutorial', skipTutorial);
     on('#btn-exit-playtest', exitPlaytest);
     on('#btn-exit-playtest2', exitPlaytest);
     on('#btn-undo', undo);
@@ -1086,6 +1170,7 @@
     on('#btn-continue', keepImproving);
     on('#btn-continue-bar', keepImproving);
     on('#btn-next', () => startCampaign(S.levelIndex + 1));
+    on('#btn-tutorial-replay', startTutorial);
     on('#btn-next-bar', () => startCampaign(S.levelIndex + 1));
     on('#btn-prev-level', () => startCampaign(S.levelIndex - 1));
     on('#btn-share', doShare);

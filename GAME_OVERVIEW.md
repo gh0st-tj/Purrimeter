@@ -67,8 +67,9 @@ inlining the scripts would get them blocked and render a blank page. Edit
 
 ## 3. Feature inventory
 
-- **Tutorial** — auto-launches for new players (`tutorialDone` flag); scripted steps with a glowing target
-  tile; only the scripted tile is tappable; replayable from home.
+- **Tutorial** — auto-launches for new players (`tutorialDone` flag); eight guided steps with clear progress,
+  contextual actions, safe Back navigation, glowing target tiles, a remembered Skip choice, and a focused
+  completion handoff into Garden 2. Replayable from **How to play** on home.
 - **Campaign** — 35 levels on a winding "Campaign Trail" (SVG path, card nodes with icon/state/stars,
   progress bar). **Levels lock**: you must clear (≥1 star) level N to open N+1. Order is a deliberate
   difficulty curve: basics → mechanic lessons placed next to the mechanic they teach (Cucumber Shield after
